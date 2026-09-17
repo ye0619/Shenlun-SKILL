@@ -1,0 +1,46 @@
+{
+  "name": "shenlun-skill",
+  "version": "1.0.0",
+  "description": "申论阅卷人式批改训练 skill：小题语义采分、公文五项检查、大作文“档位锚定 + 档内定位”，一条 npx 命令装进你的工作区。",
+  "keywords": [
+    "申论",
+    "公务员",
+    "国考",
+    "省考",
+    "批改",
+    "阅卷",
+    "申论批改",
+    "skill",
+    "dsh",
+    "deepseek-harness",
+    "shenlun",
+    "civil-service",
+    "grading"
+  ],
+  "license": "MIT",
+  "private": false,
+  "bin": {
+    "shenlun-skill": "bin/install.js"
+  },
+  "files": [
+    ".dsh/skills/shenlun-judge",
+    "bin",
+    "templates"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ye0619/Shenlun-SKILL.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ye0619/Shenlun-SKILL/issues"
+  },
+  "homepage": "https://github.com/ye0619/Shenlun-SKILL#readme",
+  "scripts": {
+    "selftest": "node bin/install.js --dry-run --dir .",
+    "pack:check": "npm pack --dry-run",
+    "check:syntax": "node --check bin/install.js"
+  }
+}

@@ -1,0 +1,34 @@
+MIT License
+
+Copyright (c) 2026 ye0619
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+补充说明（非 MIT 条款，仅作声明）：
+
+1. 本仓库分发的**只是 skill 本体**（提示词、评分口径细则、字数核验脚本与安装器），
+   **不包含**任何真题原卷、机构参考答案、机构解析或他人作答材料；
+   仓库中的 `.gitignore` 已把 `真题/`、`参考答案/`、`作答记录/`、`批改报告/`、`批改规范/`
+   排除在版本控制之外。
+2. 真题原卷、参考答案与解析的著作权归各自权利人所有；使用者应自行确认其获取与使用方式合法，
+   不要再分发。
+3. 本 skill 输出的分数**一律是模拟阅卷模型的产物（经验口径）**，
+   不代表、也不能替代任何官方评分标准；官方阅卷细则与采分表通常未公开。
