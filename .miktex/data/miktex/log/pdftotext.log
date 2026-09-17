@@ -1,0 +1,19 @@
+2026-09-06 17:11:57,390+0800 INFO  pdftotext - this process (5336) started by powershell in directory D:\Projtcts\shenlun with command line: C:\Users\ASUS\AppData\Local\Programs\MiKTeX\miktex\bin\x64\pdftotext.exe -enc UTF-8 D:\Projtcts\shenlun\河南申论真题\2020年0725公务员多省联考《申论》题（河南县级卷）.pdf D:\Projtcts\shenlun\_tmp_2020hn.txt
+2026-09-06 17:11:57,391+0800 INFO  pdftotext - running on Windows 10.0.26200
+2026-09-06 17:11:57,405+0800 INFO  pdftotext - running One MiKTeX Utility to refresh the file name database
+2026-09-06 17:11:57,406+0800 INFO  pdftotext.core - start process: miktex --quiet fndb refresh
+2026-09-06 17:11:57,616+0800 INFO  pdftotext - running One MiKTeX Utility to create font map files
+2026-09-06 17:11:57,617+0800 INFO  pdftotext.core - start process: miktex --quiet fontmaps configure
+2026-09-06 17:12:00,176+0800 INFO  pdftotext - this process (5336) finishes with exit code 0
+2026-09-06 17:12:00,215+0800 ERROR pdftotext.core - 拒绝访问。
+
+2026-09-06 17:12:00,215+0800 ERROR pdftotext.core - Function: RegCreateKeyExW
+2026-09-06 17:12:00,215+0800 ERROR pdftotext.core - Result: 5
+2026-09-06 17:12:00,216+0800 ERROR pdftotext.core - Data: path="Software\MiKTeX.org\MiKTeX\2.9\Setup"
+2026-09-06 17:12:00,216+0800 ERROR pdftotext.core - Source: Libraries\MiKTeX\Core\win\winRegistry.cpp:207
+2026-09-06 17:12:00,216+0800 FATAL pdftotext - Windows API error 5: 拒绝访问。
+
+2026-09-06 17:12:00,216+0800 FATAL pdftotext - Info: path="Software\MiKTeX.org\MiKTeX\2.9\Setup"
+2026-09-06 17:12:00,216+0800 FATAL pdftotext - Source: Libraries\MiKTeX\Core\win\winRegistry.cpp
+2026-09-06 17:12:00,216+0800 FATAL pdftotext - Line: 207
+2026-09-06 17:12:00,224+0800 INFO  pdftotext - this process (5336) finishes with exit code 1
