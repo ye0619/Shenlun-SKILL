@@ -251,7 +251,7 @@ def main():
     ap.add_argument('--limit', type=int, help='题目字数上限或目标值，如 300 / 1000 / 1200')
     ap.add_argument('--limits', help='分题上限，逗号分隔（配合 --split），如 300,200,500,500,300')
     ap.add_argument('--floor', type=int, help='题目给出的下限，如 "1000—1200字" 的 1000')
-    ap.add_argument('--approx', action='store_true', help='题目为 "X 字左右"（±10% 弹性）')
+    ap.add_argument('--approx', action='store_true', help='题目为 "X 字左右"（±10%% 弹性）')
     ap.add_argument('--split', action='store_true',
                     help='按 "第X大题/第X题" 标号把整份作答切块后逐题统计（套卷用）')
     ap.add_argument('--label', help='本次统计的名称，如 "第一题作答"')
