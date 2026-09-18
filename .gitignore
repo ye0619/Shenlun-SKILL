@@ -61,6 +61,7 @@ __pycache__/
 新的修改.txt
 readme修改.txt
 *修改.txt
+*修改.md
 
 # ---- 本地随意导出的成品（如导出的 PDF 副本）----
 # 注意：仓库根目录下任何 README.* 都会被 npm 强制打进包里，导出物请勿命名为 README.*

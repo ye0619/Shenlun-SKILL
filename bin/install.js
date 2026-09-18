@@ -229,10 +229,8 @@ function main() {
     process.stdout.write('\n工作区脚手架目录（已存在的内容一律不覆盖）：\n');
     for (const dirName of SCAFFOLD_DIRS) {
       const dirPath = path.join(target, dirName);
-      const tplReadme = path.join(PKG_ROOT, TEMPLATE_REL, dirName, 'README.md');
-      const destReadme = path.join(dirPath, 'README.md');
+      const tplDir = path.join(PKG_ROOT, TEMPLATE_REL, dirName);
       const dirExisted = fs.existsSync(dirPath);
-      const readmeExisted = fs.existsSync(destReadme);
 
       if (!dirExisted && !dryRun) {
         fs.mkdirSync(dirPath, { recursive: true });
@@ -243,24 +241,35 @@ function main() {
         process.stdout.write('    ' + dirName + '/  ' + (dirExisted ? '目录已存在（保留）' : '已创建'));
       }
 
-      if (readmeExisted) {
-        process.stdout.write('，README.md 已存在，跳过（不覆盖）\n');
+      // 目录内模板：README.md（使用说明）＋ `_*.md`（可复制使用的模板，如
+      // `真题/_TEMPLATE.md`、`批改规范/_模板.md`、`批改规范/_动态评分规范模板.md`）。
+      // 逐份判断"目标已存在则不覆盖"，与 README.md 同规矩。
+      const tplFiles = fs.existsSync(tplDir)
+        ? fs.readdirSync(tplDir).filter((f) => f === 'README.md' || (/^_.+\.md$/.test(f)))
+        : [];
+      if (!tplFiles.length) {
+        process.stdout.write('，包内缺少模板文件，跳过\n');
         continue;
       }
-      if (!fs.existsSync(tplReadme)) {
-        process.stdout.write('，包内缺少模板 README.md，跳过\n');
-        continue;
-      }
-      if (dryRun) {
-        process.stdout.write('，将写入 README.md\n');
-      } else {
-        try {
-          fs.copyFileSync(tplReadme, destReadme);
-          process.stdout.write('，已写入 README.md\n');
-        } catch (err) {
-          fail('写入 ' + destReadme + ' 失败：' + err.message);
+      const written = [];
+      for (const f of tplFiles) {
+        const dest = path.join(dirPath, f);
+        if (fs.existsSync(dest)) {
+          written.push(f + '(已存在,跳过)');
+          continue;
+        }
+        if (dryRun) {
+          written.push(f + '(将写入)');
+        } else {
+          try {
+            fs.copyFileSync(path.join(tplDir, f), dest);
+            written.push(f);
+          } catch (err) {
+            fail('写入 ' + dest + ' 失败：' + err.message);
+          }
         }
       }
+      process.stdout.write('，模板：' + written.join('、') + '\n');
     }
   }
 
