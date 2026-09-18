@@ -20,6 +20,8 @@ const path = require('path');
 const PKG_ROOT = path.resolve(__dirname, '..');
 const SKILL_REL = path.join('.dsh', 'skills', 'shenlun-judge');
 const TEMPLATE_REL = path.join('templates', 'workspace');
+/** skill 要调用的配套脚本：放在工作区根目录的工具目录里（skill 文档按此路径调用） */
+const TOOLS_REL = '工具';
 const SCAFFOLD_DIRS = ['参考答案', '作答记录', '批改报告', '批改规范', '真题'];
 
 // 复制时跳过的文件/目录：缓存与系统垃圾，不进用户工作区
@@ -35,12 +37,14 @@ const USAGE = `shenlun-skill —— 申论阅卷人式批改训练 skill 安装�
   --dir <路径>     安装到指定工作区目录（默认：当前目录）
   --force          清空并重建已存在的 skill 目录（删除旧版本残留文件）
   --dry-run        只打印将要执行的操作，不写盘
-  --no-workspace   不创建工作区脚手架目录（参考答案/ 作答记录/ 批改报告/ 批改规范/ 真题/）
+  --no-workspace   不创建五个材料目录（参考答案/ 作答记录/ 批改报告/ 批改规范/ 真题/）；
+                   工具/ 仍会安装，因为 skill 要调用它
   -h, --help       显示本帮助
   --version        显示版本号
 
 安装内容：
-  <工作区>/.dsh/skills/shenlun-judge/   skill 本体（SKILL.md + references/ + scripts/）
+  <工作区>/.dsh/skills/shenlun-judge/   skill 本体（SKILL.md + README.md + references/，不含任何数据与脚本）
+  <工作区>/工具/                        skill 的配套脚本（count_chars.py 字数核验、ref_independence.py 同源检测）
   <工作区>/{参考答案,作答记录,批改报告,批改规范,真题}/README.md   目录使用说明（已存在则不覆盖）
 
 装上以后，在 DeepSeek Harness 里打开该工作区，直接说「批改 2022河南乡镇」即可。`;
@@ -175,7 +179,7 @@ function main() {
   if (skillExisted) {
     process.stdout.write('    目标：' + skillDest + '\n');
   }
-  process.stdout.write('    ' + tag('复制 ' + skillFiles.length + ' 个文件：SKILL.md、references/、scripts/count_chars.py\n'));
+  process.stdout.write('    ' + tag('复制 ' + skillFiles.length + ' 个文件：SKILL.md、README.md、references/（' + (skillFiles.length - 2) + ' 个细则文件）\n'));
 
   if (!dryRun) {
     try {
@@ -192,9 +196,35 @@ function main() {
     process.stdout.write(tag('    → ' + skillDest + '（含 ' + skillFiles.length + ' 个文件）\n'));
   }
 
-  // ---- 2. 工作区脚手架目录 ----
+  // ---- 2. 配套脚本（工具/）----
+  // skill 的文档按固定路径调用 <工作区>/工具/{count_chars.py,ref_independence.py}，
+  // 因此这两个脚本必须落在工作区里；--no-workspace 也照装（否则 skill 无法核验字数/判同源）。
+  const toolsSrc = path.join(PKG_ROOT, TOOLS_REL);
+  const toolsDest = path.join(target, TOOLS_REL);
+  if (!fs.existsSync(toolsSrc)) {
+    process.stdout.write('\n[!] 包内缺少 ' + TOOLS_REL + '/，跳过配套脚本（skill 的字数核验与同源检测将不可用）\n');
+  } else {
+    const toolFiles = listFiles(toolsSrc);
+    const toolsExisted = fs.existsSync(toolsDest);
+    process.stdout.write('\n配套脚本（skill 调用，路径固定请勿改名）：\n');
+    process.stdout.write(
+      tag('    ' + TOOLS_REL + '/  ' + (toolsExisted ? '目录已存在（保留其他文件）' : '将创建') +
+        '，写入 ' + toolFiles.length + ' 个文件：' + toolFiles.join('、') + '\n')
+    );
+    if (!dryRun) {
+      try {
+        fs.mkdirSync(toolsDest, { recursive: true });
+        fs.cpSync(toolsSrc, toolsDest, { recursive: true, force: true, filter: copyFilter });
+        process.stdout.write('    ' + TOOLS_REL + '/  ' + (toolsExisted ? '已更新：' : '已安装：') + toolsDest + '\n');
+      } catch (err) {
+        fail('复制配套脚本失败：' + err.message + '\n    源：' + toolsSrc + '\n    目标：' + toolsDest);
+      }
+    }
+  }
+
+  // ---- 3. 工作区脚手架目录 ----
   if (!opts.workspace) {
-    process.stdout.write('\n[i] --no-workspace：跳过工作区脚手架目录\n');
+    process.stdout.write('\n[i] --no-workspace：跳过五个材料目录\n');
   } else {
     process.stdout.write('\n工作区脚手架目录（已存在的内容一律不覆盖）：\n');
     for (const dirName of SCAFFOLD_DIRS) {
@@ -234,7 +264,7 @@ function main() {
     }
   }
 
-  // ---- 3. 下一步提示 ----
+  // ---- 4. 下一步提示 ----
   process.stdout.write('\n' + (dryRun ? '以上为演练结果，未写入任何文件。去掉 --dry-run 即真正安装。\n' : '装好了。\n'));
   process.stdout.write(
     '下一步：\n' +
@@ -242,7 +272,8 @@ function main() {
       '  2. 直接说：批改 2022河南乡镇   （或：批改 .\\作答记录\\河南\\2022河南乡镇.txt）\n' +
       '  3. 真题卷、参考答案、你的作答丢到工作区根目录或对应目录即可，助手会按规范自动归位\n' +
       '  4. skill 说明：' + path.join(skillDest, 'README.md') + '\n' +
-      '  5. 更新或重装：npx shenlun-skill --force\n'
+      '  5. 配套脚本：' + toolsDest + '（' + TOOLS_REL + '/count_chars.py 字数核验、' + TOOLS_REL + '/ref_independence.py 参考答案同源检测）\n' +
+      '  6. 更新或重装：npx shenlun-skill --force\n'
   );
   return 0;
 }

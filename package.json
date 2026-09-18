@@ -25,7 +25,8 @@
   "files": [
     ".dsh/skills/shenlun-judge",
     "bin",
-    "templates"
+    "templates",
+    "工具"
   ],
   "engines": {
     "node": ">=18"
