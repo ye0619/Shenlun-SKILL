@@ -78,6 +78,10 @@ readme修改.txt
 国考评分规范*.md
 国考评分规范*.txt
 
+# ---- skill 规则变更底稿（含校准证据与全文快照，本地保留）----
+# 变更史已由 skill 内 scoring-standards.md 修订记录 与 仓库 README 更新记录 承载，不入库
+shenlun skill 规则更改/
+
 # ---- 本地随意导出的成品（如导出的 PDF 副本）----
 # 注意：仓库根目录下任何 README.* 都会被 npm 强制打进包里，导出物请勿命名为 README.*
 /README.pdf
