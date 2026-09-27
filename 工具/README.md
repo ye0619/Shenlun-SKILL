@@ -4,11 +4,22 @@
 
 | 脚本 | 干什么 | 典型命令 |
 |---|---|---|
-| `count_chars.py` | **字数核验**（答题卡口径：含标点，不含空格换行）。示例答案/参考范文的标注字数**必须**由它产出 | `python 工具/count_chars.py 作文.txt --limit 1000 --approx` |
+| `count_chars.py` | **单块字数统计**（答题卡口径：含标点，不含空格换行）。**示例答案/参考范文的标注字数必须由它产出** | `python 工具/count_chars.py 作文.txt --limit 1000 --approx` |
+| **`卷面核验.py`** | **整卷字数一次过核验**（把整份作答按题切块 → 一屏 ASCII 表格 → 达标/超限判定）。**批改用户作答时用这个，不要再用"写临时文件＋反复跑 count_chars"那套** | `python 工具/卷面核验.py 作答记录/浙江/2019浙江A.txt --spec "1:300,2:300,3:300,4:approx1000" --md 批改报告/.字数核验/2019浙江A-字数.md` |
+| **`split_reference.py`** | **参考答案汇总件按题拆分**（一次调用切出 `第N题.txt`；**只新增、不动源件**，已存在默认跳过） | `python 工具/split_reference.py "参考答案/浙江/2026浙江B/.原始件/x.md" --outdir "参考答案/浙江/2026浙江B"` |
 | `ref_independence.py` | **参考答案同源检测**：对同一题的多个参考答案两两算文本重合率并分组，输出**独立来源家数**（＝分组数），供"小题采分点共识模型"判"几家独立" | `python 工具/ref_independence.py 参考答案/河南/2022河南乡镇 --question 1` |
 
-- 两个脚本都是 **Python 3 标准库实现、零第三方依赖**，可自带 `--selftest` 自检：
-  `python 工具/count_chars.py --selftest`、`python 工具/ref_independence.py --selftest`
+- 四个脚本都是 **Python 3 标准库实现、零第三方依赖**，各带 `--selftest` 自检：
+  `python 工具/count_chars.py --selftest`、`python 工具/卷面核验.py --selftest`、
+  `python 工具/split_reference.py --selftest`、`python 工具/ref_independence.py --selftest`。
+- **省 token 纪律（2026-09-27 实测后新增）**：这三件事**各只允许一次调用**——
+  整卷字数 → `卷面核验.py`（一次出表，`--md` 直接产出报告块）；
+  汇总件拆题 → `split_reference.py`；同源家数 → `ref_independence.py`。
+  **禁止**写 `.dsh/_*.txt` 临时件再回读、**禁止**为一次拆分现写 `.py` 脚本
+  （历史实测：单卷因此多花 ≈12 步、约 1.5 万 output tokens）。
+- **控制台中文会乱码**：`卷面核验.py` / `split_reference.py` 的屏幕输出**刻意只用 ASCII**
+  （写进文件的中文走 `--md`）；`count_chars.py` 的结论行含中文，若显示乱码，
+  加 `--json` 读结构化结果，不要靠"再跑一遍"来确认。
 - **口径纪律**：`ref_independence.py` 的相似度**只用于参考答案之间判同源**，
   **不参与给分**（给分看语义，不看文本相似度）；阈值 `--same 0.80` / `--near 0.60` 属经验口径。
 - **诊断参数清单**（与 `SKILL.md` 第十节索引一致）：`--question`／`--same`／`--near`／
@@ -45,7 +56,7 @@
   ⚠ 若你的答案文件用 `# 粉笔` 这种 H1 写机构名，请改成 `## 粉笔`（或用 `--no-split`）。
   自检含**回归用例**（`--selftest` 的"自检10"专测这两条），共 10 项。
 - 用 `npx` 安装时，安装器会自动把本目录放到你工作区的 `工具/` 下；
-  清空或删掉本目录会导致"字数核验"与"同源检测"不可用（重新安装即可恢复）。
-- 你可以打开这两个脚本查看逻辑，也欢迎按自己的需要改；但改了以后记得同步 `README.md` 里
-  对命令的说明（`.dsh/skills/shenlun-judge/references/word-count.md` 与
-  `references/small-questions.md` 第四节都引用了这里的命令）。
+  清空或删掉本目录会导致"字数核验""同源检测""汇总件拆题"不可用（重新安装即可恢复）。
+- 你可以打开这几个脚本查看逻辑，也欢迎按自己的需要改；但改了以后记得同步 `README.md` 里
+  对命令的说明（`.dsh/skills/shenlun-judge/references/word-count.md`、
+  `references/reference-answers.md` 与 `references/small-questions.md` 第四节都引用了这里的命令）。

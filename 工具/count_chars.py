@@ -8,7 +8,7 @@
 
 用法：
   python count_chars.py 示例答案.txt --limit 300          # 小题示例答案（上限 300 字）
-  python count_chars.py 作文.txt --limit 1000 --approx     # "1000 字左右"
+  python count_chars.py 作文.txt --limit 1000 --approx     # "1000 字左右"（达标区 ±50）
   python count_chars.py 作文.txt --limit 1200 --floor 1000 # "1000—1200 字"
   python count_chars.py 整卷作答.txt --split --limits 300,200,300,500,500   # 套卷切块统计
   python count_chars.py 答案.txt --limit 300 --json        # 机器可读，便于落盘留痕
@@ -43,10 +43,14 @@ NUMBERING_RE = re.compile(
 MD_MARKS_RE = re.compile(r'[*`~_]')
 MD_TABLE_SEP_RE = re.compile(r'^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(?:\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$', re.M)
 MD_PIPE_RE = re.compile(r'\|')
-SECTION_RE = re.compile(
-    r'^(?:第[一二三四五六七八九十百0-9]{1,3}(?:大题|小题|题)[^\n]{0,20}'
-    r'|题目[一二三四五六七八九十0-9]{1,3}[^\n]{0,20}'
-    r'|题[目]?[一二三四五六七八九十0-9]{1,3}[：:、][^\n]{0,20})$')
+SECTION_CORE = (r'第[一二三四五六七八九十百0-9]{1,3}(?:大题|小题|题)'
+                r'|题目[一二三四五六七八九十0-9]{1,3}')
+SECTION_RE = re.compile(r'^(?:%s)[^\n]{0,20}$' % SECTION_CORE)
+SECTION_LOOSE_RE = re.compile(r'(?:%s)' % SECTION_CORE)
+# 卷头/答题纸前缀（"答题纸 第一大题""2019年浙江省公考《申论》题（A卷） 第二大题"）
+MD_LEAD_RE = re.compile(r'^[ \t]*(?:#{1,6}|[>*]|[-*+][ \t]|\*\*|【|\[)[ \t]*')
+# 出现这些字符 = 像正文句子，不像题号行
+PROSE_MARK_RE = re.compile(r'[。！？；，、：]|根据|结合|请|要求|概括|谈谈|指出')
 ANNOTATION_BLOCK_RE = re.compile(
     r'^[ \t]*(?:【|\[)(?:说明|批注|备注|转写说明|转写情况|作答说明|补充说明)(?:】|\])')
 ANNOTATION_TOKEN_RE = re.compile(
@@ -136,6 +140,30 @@ def analyse_text(raw, path):
     }
 
 
+def section_header(line):
+    """判断一行是不是"第X题/第X大题"分节标题；是则返回规范化标题，否则 None。
+
+    兼容三种真实写法（历史事故来源）：
+      1. 裸标题：`第三大题` / `第1题：xxx`
+      2. markdown 标题：`## 第一题` / `**第二题**` / `> 第三题`
+      3. 卷头带前缀：`答题纸 第一大题` / `2019年浙江省公考《申论》题（A卷） 第二大题`
+    拒绝正文句子（含 。！？；，、： 或"根据/结合/请/要求/概括…"等提示词）。
+    """
+    s = MD_LEAD_RE.sub('', line.strip()).strip()
+    if not s or len(s) > 60:
+        return None
+    m = SECTION_RE.match(s)
+    if m:
+        return m.group(0).strip()
+    m = SECTION_LOOSE_RE.search(s)
+    if not m:
+        return None
+    prefix = s[:m.start()]
+    if PROSE_MARK_RE.search(prefix):
+        return None
+    return s[max(0, m.start()):].strip()[:40]
+
+
 def split_sections(raw):
     """按"第X大题/第X题"等小题标号把整份作答切成若干块。
 
@@ -145,11 +173,11 @@ def split_sections(raw):
     lines = raw.replace('\r\n', '\n').replace('\r', '\n').split('\n')
     out, cur, cur_matched, buf = [], None, False, []
     for ln in lines:
-        m = SECTION_RE.match(ln.strip())
-        if m and len(ln.strip()) <= 40:
+        name = section_header(ln)
+        if name:
             if cur is not None:
                 out.append({'name': cur, 'text': '\n'.join(buf), 'matched': cur_matched})
-            cur, cur_matched, buf = m.group(0).strip(), True, []
+            cur, cur_matched, buf = name, True, []
         else:
             if cur is None:
                 if not ln.strip():
@@ -174,13 +202,15 @@ def judge(total, limit, floor, approx):
             return 'over', '超出区间上限 %d 字' % (total - high), span_txt
         return 'ok', '在题目要求区间内', span_txt
     if approx:
-        low, high = int(round(limit * 0.9)), int(round(limit * 1.1))
-        span_txt = '%d–%d 字（"X 字左右"±10%%）' % (low, high)
+        # "X 字左右" 的达标区 = **±50 字**（用户口径 2026-09-15 立、2026-09-21 重申、2026-09-27 沿用）。
+        # 注意：早期版本这里是 ±10%，与口径不符，已更正。
+        low, high = limit - 50, limit + 50
+        span_txt = '%d–%d 字（"X 字左右"±50）' % (low, high)
         if total < low:
             return 'short', '低于弹性下限 %d 字（差 %d 字）' % (low, low - total), span_txt
         if total > high:
             return 'over', '超出弹性上限 %d 字' % (total - high), span_txt
-        return 'ok', '在"X 字左右"弹性范围内', span_txt
+        return 'ok', '在"X 字左右"达标区（±50）内', span_txt
     lo_ok, hi_ok = int(round(limit * 0.85)), int(limit * 0.95)
     span_txt = '示例答案目标区间 %d–%d 字（上限 %d 字的 85%%–95%%）' % (lo_ok, hi_ok, limit)
     if total > limit:
@@ -241,6 +271,22 @@ def selftest():
         if got != expect:
             failed += 1
         print('%s %-24r expect=%d got=%d' % (flag, text, expect, got))
+
+    # 分节识别：三种真实写法都要能切，正文句子不能被误切
+    split_cases = [
+        ('plain-clean', '第三大题\n' + '甲' * 10 + '\n第四大题\n' + '乙' * 10, 2),
+        ('md-heading', '# x\n\n## 第一题\n' + '甲' * 10 + '\n\n## 第二题\n' + '乙' * 10, 2),
+        ('paper-prefix', '答题纸 第一大题\n' + '甲' * 10 + '\n2019年浙江省公考《申论》题（A卷） 第二大题\n' + '乙' * 10, 2),
+        ('bold-marker', '**第一题**\n' + '甲' * 10 + '\n**第二题**\n' + '乙' * 10, 2),
+        ('prose-rejected', '第一题\n' + '甲' * 10 + '\n结合给定资料，谈谈你对第二题的理解。\n' + '乙' * 10, 0),
+    ]
+    for name, text, expect in split_cases:
+        got = len([s for s in split_sections(text) if s['matched']]) if expect else len(split_sections(text))
+        ok = (got == expect)
+        if not ok:
+            failed += 1
+        print('%s split[%-14s] expect=%d got=%d' % ('OK ' if ok else 'FAIL', name, expect, got))
+
     print('selftest: %s' % ('all passed' if failed == 0 else '%d failed' % failed))
     return 1 if failed else 0
 
@@ -251,7 +297,7 @@ def main():
     ap.add_argument('--limit', type=int, help='题目字数上限或目标值，如 300 / 1000 / 1200')
     ap.add_argument('--limits', help='分题上限，逗号分隔（配合 --split），如 300,200,500,500,300')
     ap.add_argument('--floor', type=int, help='题目给出的下限，如 "1000—1200字" 的 1000')
-    ap.add_argument('--approx', action='store_true', help='题目为 "X 字左右"（±10%% 弹性）')
+    ap.add_argument('--approx', action='store_true', help='题目为 "X 字左右"（达标区 ±50 字）')
     ap.add_argument('--split', action='store_true',
                     help='按 "第X大题/第X题" 标号把整份作答切块后逐题统计（套卷用）')
     ap.add_argument('--label', help='本次统计的名称，如 "第一题作答"')
