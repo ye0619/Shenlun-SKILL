@@ -68,6 +68,7 @@ https://github.com/opendatalab/MinerU ）。现在口径严格了，但还是很
 
 **10.3 修改**：修复了部分逻辑冲突。
 
+**10.15 修改**：开了一个月Chat gpt plus，使用open ai的模型进行了一些修改。
 
 ---
 
