@@ -42,6 +42,12 @@ NUMBERING_RE = re.compile(
     re.M)
 MD_MARKS_RE = re.compile(r'[*`~_]')
 MD_TABLE_SEP_RE = re.compile(r'^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(?:\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$', re.M)
+# 装饰性分隔行：整行由同一个符号重复 ≥3 次构成（`====`、`####`、`~~~~`、`++++`…）。
+# 这类行是转写/排版时的分隔装饰，不是答题内容。
+# 2026-10-11 事故（2019国考地市级）：作答文件每题前后各一行 37 个 `=`，
+# 旧规则只剔除带 `-` 的表格线、`MD_MARKS_RE` 又不含 `=`，故 37 个 `=`
+# 被计为标点 → 每题虚增 74（末题 37），报告字数与超标判定全错。
+MD_SEP_LINE_RE = re.compile(r'^[ \t]*([=\-*_~#+·—─])\1{2,}[ \t]*$', re.M)
 MD_PIPE_RE = re.compile(r'\|')
 SECTION_CORE = (r'第[一二三四五六七八九十百0-9]{1,3}(?:大题|小题|题)'
                 r'|题目[一二三四五六七八九十0-9]{1,3}')
@@ -89,6 +95,7 @@ def strip_markdown(text):
     text = MD_QUOTE_RE.sub('', text)
     text = MD_BULLET_RE.sub('', text)
     text = MD_TABLE_SEP_RE.sub('', text)
+    text = MD_SEP_LINE_RE.sub('', text)
     text = MD_PIPE_RE.sub('', text)
     text = MD_MARKS_RE.sub('', text)
     return text
@@ -262,6 +269,11 @@ def selftest():
         ('【说明】这是我的背景说明，不算作答。\n\n正文内容。', 5),
         ('【批注】随便写点\n\n你好。\n\n后面的正文。', 9),
         ('第一句。（转写存疑）第二句。', 8),
+        # 装饰分隔行不计入（2026-10-11 事故回归：37 个 `=` / 37 个 `#`）
+        ('甲甲甲\n' + '=' * 37 + '\n乙乙乙乙', 7),
+        ('=' * 37 + '\n你好，世界。\n' + '=' * 37, 6),
+        ('#' * 37 + '\n甲', 1),
+        ('~~~~\n你好。', 3),
     ]
     failed = 0
     for text, expect in cases:

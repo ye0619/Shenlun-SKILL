@@ -8,10 +8,13 @@
 | **`卷面核验.py`** | **整卷字数一次过核验**（把整份作答按题切块 → 一屏 ASCII 表格 → 达标/超限判定）。**批改用户作答时用这个，不要再用"写临时文件＋反复跑 count_chars"那套** | `python 工具/卷面核验.py 作答记录/浙江/2019浙江A.txt --spec "1:300,2:300,3:300,4:approx1000" --md 批改报告/.字数核验/2019浙江A-字数.md` |
 | **`split_reference.py`** | **参考答案汇总件按题拆分**（一次调用切出 `第N题.txt`；**只新增、不动源件**，已存在默认跳过） | `python 工具/split_reference.py "参考答案/浙江/2026浙江B/.原始件/x.md" --outdir "参考答案/浙江/2026浙江B"` |
 | `ref_independence.py` | **参考答案同源检测**：对同一题的多个参考答案两两算文本重合率并分组，输出**独立来源家数**（＝分组数），供"小题采分点共识模型"判"几家独立" | `python 工具/ref_independence.py 参考答案/河南/2022河南乡镇 --question 1` |
+| **`卷级一致性检查.py`** | **卷级留痕齐备性检查**（2026-10-11 新建）：核对批改报告／小题动态评分规范／大作文规范／采分点共识表／字数核验／刻度三件套／README 登记行／卷级隔离与评分依据声明／满分→换算表字样，并**用 `ref_independence.py` 实测家数与共识表声明值交叉核对** | `python 工具/卷级一致性检查.py --paper 2019国考地市级` |
 
-- 四个脚本都是 **Python 3 标准库实现、零第三方依赖**，各带 `--selftest` 自检：
+- 五个脚本都是 **Python 3 标准库实现、零第三方依赖**，各带 `--selftest` 自检：
   `python 工具/count_chars.py --selftest`、`python 工具/卷面核验.py --selftest`、
-  `python 工具/split_reference.py --selftest`、`python 工具/ref_independence.py --selftest`。
+  `python 工具/split_reference.py --selftest`、`python 工具/ref_independence.py --selftest`、
+  `python 工具/卷级一致性检查.py --selftest`。
+- **卷级收尾必跑**：`python 工具/卷级一致性检查.py --paper <卷ID>`（**退出码 1＝有缺件**；⚠ 项按需处理）。
 - **省 token 纪律（2026-09-27 实测后新增）**：这三件事**各只允许一次调用**——
   整卷字数 → `卷面核验.py`（一次出表，`--md` 直接产出报告块）；
   汇总件拆题 → `split_reference.py`；同源家数 → `ref_independence.py`。
@@ -82,7 +85,7 @@ python 工具/lint_rulings.py --json                 # 机器可读（落盘留�
 python 工具/lint_rulings.py --selftest             # 自检
 ```
 
-- **扫描范围**：`--root` 指定的目录（默认：`.dsh/skills/shenlun-judge`、`templates/workspace`、
+- **扫描范围**：`--root` 指定的目录（默认：`.dsh/skills/shenlun-judge`，仅有 Codex 时用 `.agents/skills/shenlun-judge`；另扫 `templates/workspace`、
   `批改规范`，**存在才扫**），递归、只扫 `*.md`。
 - **允许上下文（自动忽略，共四类）**——命中记为**已忽略**（默认不报、不计入残留数）：
   1. 命中行**本身或它的前一行**含
@@ -131,3 +134,13 @@ python 工具/lint_rulings.py --selftest             # 自检
 
 > 规则表写在脚本顶部的 `RULES` 里：**改了口径就往里加一条**（id／正则／一句说明），
 > 与 `README.md` 这张表同步即可；**不要改脚本的调用方式**（skill 维护流程按固定命令调用）。
+
+---
+
+## 修订记录（脚本行为变更）
+
+| 日期 | 脚本 | 变更 |
+|---|---|---|
+| 2026-10-11 | `count_chars.py` | **装饰线/分隔线不再计入**：新增 `MD_SEP_LINE_RE`，剔除单独占一行的 ≥3 个同字符行（`=====`／`-----`／`*****`／`~~~~~`／`#####`）。事故：2019 国考地市级作答每题前后各一行 37 个 `=`，被判为标点，每题虚增 74 字、第5题虚增 37 字。`--selftest` 增 4 例（共 13 例）。**注意：文件头尾的标题/页眉块不会被自动剔除，须人工判断。** |
+| 2026-10-11 | `ref_independence.py` | **行首"`【标签】正文`"（标签与正文同行）可识别**：新增 `_WRAPPED_LEAD_RE` 与 `_name_variants()`（含"去尾部括号昵称"候选），`header_candidate()` 增「0) 行首包裹式标签」分支；`COLON_NAME_RE` 分支不再直接 `return None`，改为继续落到白名单精确/兜底扫描（修 `【B 站小马哥】…：` 因正文含冒号被整行吞掉）；`_warn_possible_missed_labels()` 增 `SUSPECT_WRAPPED_RE` 告警；`WHITELIST` 补 `lulu 一定要上岸`／`永岸公考`／`粤政喵`。事故：2019 国考地市级脚本报 3／3／1／2／8 家，实为 17／9／9／8／8 家。`--selftest` 增「自检11」（共 11 项）。 |
+| 2026-10-11 | `卷级一致性检查.py` | **新增**（VERSION 1.0.0）：卷级留痕齐备性 ＋ 家数交叉核对。家数核对按 `## 第N题` 分段、**每段只取第一处"独立来源 N 家"**（共识表 §2 之后常有修复前后对照，取全文匹配会把对照值误当声明值）；逐题比对后只报不一致的题号。`--selftest` 2 例。 |

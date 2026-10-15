@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Cache Steward">
+  <defs>
+    <linearGradient id="cs-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f9dff"/>
+      <stop offset="1" stop-color="#7b5cff"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#cs-g)"/>
+  <g fill="#ffffff">
+    <rect x="14" y="15" width="26" height="6" rx="3" opacity="0.95"/>
+    <rect x="14" y="25" width="36" height="6" rx="3" opacity="0.75"/>
+    <rect x="14" y="35" width="20" height="6" rx="3" opacity="0.55"/>
+    <rect x="14" y="45" width="30" height="6" rx="3" opacity="0.35"/>
+  </g>
+  <path d="M46 30 L56 34 L46 38 Z" fill="#ffffff" opacity="0.9"/>
+  <rect x="41" y="33" width="4" height="2" fill="#ffffff" opacity="0.9"/>
+</svg>

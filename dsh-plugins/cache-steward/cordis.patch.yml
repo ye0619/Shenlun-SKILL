@@ -1,0 +1,8 @@
+- insert:
+    - id: cache-steward
+      name: '@local/dsh-cache-steward'
+      config:
+        trimOversizedToolResults: true
+        toolResultSoftCapBytes: 24576
+        reportTopEvents: 8
+        logSeams: true

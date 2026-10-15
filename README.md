@@ -75,7 +75,8 @@ https://github.com/opendatalab/MinerU ）。现在口径严格了，但还是很
 
 ```text
 shenlun/
-├── .dsh/skills/shenlun-judge/     # skill 本体：SKILL.md + references/*.md（评卷口径全在这里）
+├── .agents/skills/shenlun-judge/  # Codex 发现入口（源码仓库转发到下方共用正文）
+├── .dsh/skills/shenlun-judge/     # 共用 skill 源码，也是 dsh 原生入口
 ├── 真题/                           # 试卷原题：{省份}/{卷ID}.pdf + 整理好的 {省份}/{卷ID}.md
 ├── 参考答案/                       # 机构/真题参考答案：{省份}/{卷ID}/第N题.txt
 ├── 作答记录/                       # 你的作答（只收 md / txt）：{省份}/{卷ID}.txt
@@ -98,7 +99,7 @@ shenlun/
 | `批改报告/` | 报告母本；另存字数核验留痕、采分点共识表、大作文刻度缓存 | 助手自动落盘 |
 | `真题/` | 原卷 PDF ＋ 整理好的 md（题面与材料是**最高依据**） | 你收集／助手整理 |
 | `工具/` | `count_chars.py`、`ref_independence.py` | 随仓库发布，**路径固定，别改名** |
-| `.dsh/skills/shenlun-judge/` | skill 本体：`SKILL.md` ＋ `references/` | 本仓库维护 |
+| `.agents/skills/shenlun-judge/`、`.dsh/skills/shenlun-judge/` | Codex / dsh 入口；共用正文与评分口径 | 本仓库维护 |
 
 > 仓库里**不放个人材料**：`作答记录/`、`批改报告/`、`参考答案/`、`批改规范/` 只上传空框架
 > （README ＋ `.gitkeep`），`真题/` 只上传 `国考/*.md`。PDF、个人作答、机构资料都不入库。
@@ -115,17 +116,21 @@ shenlun/
 npx github:ye0619/Shenlun-SKILL          # 从 GitHub 直接装（当前可用）
 npx shenlun-skill                        # 发布到 npm 后可用
 npx shenlun-skill --dir "D:\my-ws"       # 装到指定工作区（默认当前目录）
+npx shenlun-skill --harness codex        # 仅安装 Codex 入口与完整 skill
+npx shenlun-skill --harness dsh          # 仅安装 dsh，保留原来的使用方式
 npx shenlun-skill --dry-run              # 只打印要做什么，不写盘
 npx shenlun-skill --force                # 清空重建 skill 目录（清旧版本残留）
 npx shenlun-skill --no-workspace         # 只装 skill，不建材料目录
 npx shenlun-skill --help                 # 用法（--version 看版本）
 ```
 
-装完你会得到：① `.dsh/skills/shenlun-judge/`（skill 本体）；② `工具/`（四个脚本）；
+默认 `--harness all`。装完你会得到：① `.agents/skills/shenlun-judge/`（Codex）与
+`.dsh/skills/shenlun-judge/`（dsh）；② `工具/`（配套 Python 脚本）；
 ③ 五个材料目录 `真题/ 参考答案/ 作答记录/ 批改报告/ 批改规范/` 及各自的说明 README
 （目录已存在就保留，README 已存在就不覆盖）。
 
-装好以后，在支持 skill 的平台里打开这个工作区，直接说一句 `批改 2026河南县级` 就行。
+装好以后，在对应平台打开工作区，直接说 `批改 2026河南县级`；
+Codex 也可显式调用 `$shenlun-judge`。若当前会话尚未发现新 skill，重新打开工作区或新建会话。
 
 ### 克隆仓库手动用
 
@@ -134,8 +139,9 @@ git clone https://github.com/ye0619/Shenlun-SKILL.git
 ```
 
 - 省事做法：**直接把这个仓库当工作区用**，材料往五个目录里放。
-- 想装到别的工作区：把 `.dsh/skills/shenlun-judge/` 拷到目标工作区 `.dsh/skills/` 下，
-  再把 `工具/` 四个脚本拷到目标工作区根目录。
+- 想装到别的工作区：运行 `node bin/install.js --dir "目标工作区" --harness codex`（或 `dsh` / `all`）。
+  手动复制时，把 `.dsh/skills/shenlun-judge/` **完整目录**放到目标 harness 的 skill 目录，
+  再把整个 `工具/` 拷到目标工作区根目录；源码仓库的 Codex 转发入口不要单独复制走。
 - 注意：`.gitignore` 排除了那五个目录的内容，所以克隆下来它们是**空的**，得自己往里放材料。
   嫌麻烦就用上面的 npx。
 
@@ -260,26 +266,35 @@ git clone https://github.com/ye0619/Shenlun-SKILL.git
 
 ## 移植到 Codex、Claude 等平台
 
-skill 本体就是一堆 md 加四个标准库 Python 脚本，没有平台专属依赖，移植很轻。
-思路：**`SKILL.md` 当系统提示挂进去，`references/` 当按需查的资料，`工具/` 当工具。**
+skill 本体使用通用 `SKILL.md` 元数据与 Markdown，配套脚本只依赖 Python 3 标准库。
+它是按任务加载的指导，不需要把全部评分规则放进系统提示或 `AGENTS.md`。
 
 **第一步：复制文件**
-把 `.dsh/skills/shenlun-judge/` 整个目录拷到目标平台的工作区（目录名随意），
-再把工作区根目录的 `工具/` 一并拷过去。（用 npx 也行。）
+Codex / dsh 推荐用安装器：`node bin/install.js --dir "目标工作区" --harness all`。
+两边从同一份 `.dsh/skills/shenlun-judge/` 源码生成完整 skill；已有个人材料与登记不会被覆盖。
+直接使用本源码仓库时，Codex 的入口仅转发到共用正文；安装器会跳过源码自身复制，
+即使加 `--force` 也不会删除源 skill 或 `工具/`。
 
 **第二步：接上入口提示**
 按平台约定把主提示放到它认识的位置：
 
 | 平台 | 入口 | 注意 |
 |---|---|---|
-| **Codex / Codex CLI** | 工作区 `AGENTS.md` | 沙箱默认只写工作区；脚本用 `python` 调；大批改建议分卷 |
+| **Codex / Codex CLI** | `.agents/skills/shenlun-judge/SKILL.md` | 自然语言或 `$shenlun-judge` 调用；不改 `AGENTS.md`；在材料工作区运行脚本 |
+| **DeepSeek Harness（dsh）** | `.dsh/skills/shenlun-judge/SKILL.md` | 保留 filesystem skill provider 的发现方式与自然语言调用 |
 | **Claude Code / Claude App** | `CLAUDE.md` 或 Skill 目录 | 长报告注意输出上限，可让报告分节写入再合并 |
 | **Cursor / Windsurf** | `.cursor/rules/*.mdc`、`.windsurfrules` | 适合边写边批；长材料挤上下文，建议一次一题 |
-| **ChatGPT 网页** | 首条消息粘 `SKILL.md` | 没有文件系统 → 字数只能估，**禁止标精确字数** |
+| **ChatGPT 网页** | 提供 `SKILL.md` 与所需 references | 没有执行工具时注明未做字数/同源核验，不输出虚构精确字数或独立来源数 |
 | **纯本地脚本** | 任意 shell | 只需 `python`，无第三方依赖 |
 
-入口提示写一句就够：**读 `skills/shenlun-judge/SKILL.md`，严格按其执行；输出必须带评分依据声明、
+其他平台手动接入时，把共用 skill 目录与 `工具/` 完整复制过去。入口提示指向实际路径：
+**读所安装的 `shenlun-judge/SKILL.md`，按其执行；输出必须带评分依据声明、
 建议区间与置信度。**
+
+路径、解释器选择、可选 MinerU、无联网/无写入/无脚本时的处理，统一见
+[运行环境兼容约定](.dsh/skills/shenlun-judge/references/runtime-compatibility.md)。
+`references/` 相对于 skill 目录，材料与 `工具/` 相对于用户工作区；
+MinerU 优先复用已有安装，不因一次批改自动修改全局 skill 或记忆。
 
 **第三步：说明目录约定**
 告诉它工作区里五个目录各是什么、卷ID 怎么组——本 README 的《目录与命名规范》可以直接当这段说明。

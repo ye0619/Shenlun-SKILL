@@ -7,7 +7,7 @@
  *   npx shenlun-skill --dry-run           # 只打印将要做的事，不写盘
  *
  * 做的事：
- *   1. 把包内 .dsh/skills/shenlun-judge/ 复制到 <目标>/.dsh/skills/shenlun-judge/
+ *   1. 从同一份 skill 源码安装到 Codex / dsh 的发现目录
  *   2. 在 <目标> 下补齐工作区脚手架目录（只在不存在时创建，不动用户已有内容）
  *
  * 退出码：0 成功；1 运行失败；2 用法错误。
@@ -19,6 +19,10 @@ const path = require('path');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const SKILL_REL = path.join('.dsh', 'skills', 'shenlun-judge');
+const HARNESS_DIRS = {
+  codex: path.join('.agents', 'skills', 'shenlun-judge'),
+  dsh: SKILL_REL,
+};
 const TEMPLATE_REL = path.join('templates', 'workspace');
 /** skill 要调用的配套脚本：放在工作区根目录的工具目录里（skill 文档按此路径调用） */
 const TOOLS_REL = '工具';
@@ -35,6 +39,7 @@ const USAGE = `shenlun-skill —— 申论阅卷人式批改训练 skill 安装�
 
 选项：
   --dir <路径>     安装到指定工作区目录（默认：当前目录）
+  --harness <名称> codex | dsh | all（默认 all，同时支持 Codex 和 dsh）
   --force          清空并重建已存在的 skill 目录（删除旧版本残留文件）
   --dry-run        只打印将要执行的操作，不写盘
   --no-workspace   不创建五个材料目录（参考答案/ 作答记录/ 批改报告/ 批改规范/ 真题/）；
@@ -43,11 +48,13 @@ const USAGE = `shenlun-skill —— 申论阅卷人式批改训练 skill 安装�
   --version        显示版本号
 
 安装内容：
-  <工作区>/.dsh/skills/shenlun-judge/   skill 本体（SKILL.md + README.md + references/，不含任何数据与脚本）
+  <工作区>/.agents/skills/shenlun-judge/  Codex skill（--harness codex / all）
+  <工作区>/.dsh/skills/shenlun-judge/     dsh skill（--harness dsh / all）
   <工作区>/工具/                        skill 的配套脚本（count_chars.py 字数核验、ref_independence.py 同源检测）
   <工作区>/{参考答案,作答记录,批改报告,批改规范,真题}/README.md   目录使用说明（已存在则不覆盖）
 
-装上以后，在 DeepSeek Harness 里打开该工作区，直接说「批改 2022河南乡镇」即可。`;
+装上以后，在对应 harness 里打开工作区，直接说「批改 2022河南乡镇」即可。
+Codex 也可显式调用：$shenlun-judge。安装到本源码仓库时，Codex 使用转发入口，避免维护两份规则。`;
 
 function fail(message, code) {
   process.stderr.write('[x] ' + message + '\n');
@@ -68,7 +75,7 @@ function pkgVersion() {
 }
 
 function parseArgs(argv) {
-  const opts = { dir: '.', force: false, dryRun: false, workspace: true, help: false, version: false };
+  const opts = { dir: '.', harness: 'all', force: false, dryRun: false, workspace: true, help: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -81,6 +88,12 @@ function parseArgs(argv) {
       opts.dryRun = true;
     } else if (arg === '--no-workspace') {
       opts.workspace = false;
+    } else if (arg === '--harness' || arg.startsWith('--harness=')) {
+      const value = arg === '--harness' ? argv[++i] : arg.slice('--harness='.length);
+      if (!['codex', 'dsh', 'all'].includes(value)) {
+        usageFail('--harness 必须是 codex、dsh 或 all');
+      }
+      opts.harness = value;
     } else if (arg === '--dir') {
       const value = argv[i + 1];
       if (value === undefined || value.startsWith('--')) {
@@ -108,6 +121,41 @@ function shouldSkip(name) {
 
 function copyFilter(src) {
   return !shouldSkip(path.basename(src));
+}
+
+function sameDirectory(a, b) {
+  if (!fs.existsSync(a) || !fs.existsSync(b)) return false;
+  return fs.realpathSync(a) === fs.realpathSync(b);
+}
+
+function rejectOverlap(source, destination) {
+  const src = fs.realpathSync(source);
+  const dest = fs.existsSync(destination) ? fs.realpathSync(destination) : path.resolve(destination);
+  if (src === dest) return;
+  const nested = (a, b) => {
+    const relative = path.relative(a, b);
+    return relative && !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative);
+  };
+  if (nested(src, dest) || nested(dest, src)) {
+    fail('安装目标与源码相互包含，无法安全复制：' + destination);
+  }
+}
+
+// 在写入或 --force 删除前检查真实路径；拒绝经符号链接/目录联接写到工作区外。
+function checkedDestination(target, relative) {
+  let current = target;
+  for (const part of relative.split(path.sep)) {
+    current = path.join(current, part);
+    if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) {
+      fail('安装路径含符号链接或目录联接，请使用普通目录：' + current);
+    }
+  }
+  const resolved = path.resolve(target, relative);
+  const inside = path.relative(target, resolved);
+  if (!inside || inside.startsWith('..' + path.sep) || path.isAbsolute(inside)) {
+    fail('安装路径必须位于工作区内：' + resolved);
+  }
+  return resolved;
 }
 
 /** 递归列出目录下所有文件（相对路径，已过滤缓存垃圾） */
@@ -167,33 +215,54 @@ function main() {
     process.stdout.write(tag('[+] 将创建工作区目录（当前不存在）\n'));
   }
 
-  // ---- 1. skill 本体 ----
-  const skillDest = path.join(target, SKILL_REL);
-  const skillExisted = fs.existsSync(path.join(skillDest, 'SKILL.md'));
-  process.stdout.write(
-    (skillExisted ? '[!] ' : '[+] ') +
-      (skillExisted ? '检测到该工作区已装过本 skill，本次为更新安装：旧版本文件会被覆盖' +
-        (opts.force ? '（--force：先清空旧目录再重建）' : '（如需清掉旧版本残留文件，请加 --force）') + '\n'
-        : '将安装 skill 到 ' + skillDest + '\n')
-  );
-  if (skillExisted) {
-    process.stdout.write('    目标：' + skillDest + '\n');
+  // ---- 1. skill 本体：同一源文件分别安装，不改 AGENTS.md 或全局配置 ----
+  const harnesses = opts.harness === 'all' ? ['codex', 'dsh'] : [opts.harness];
+  // 在任何复制/清理前检查所有目标。
+  for (const harness of harnesses) {
+    rejectOverlap(skillSrc, checkedDestination(target, HARNESS_DIRS[harness]));
   }
-  process.stdout.write('    ' + tag('复制 ' + skillFiles.length + ' 个文件：SKILL.md、README.md、references/（' + (skillFiles.length - 2) + ' 个细则文件）\n'));
-
-  if (!dryRun) {
-    try {
-      if (skillExisted && opts.force) {
-        fs.rmSync(skillDest, { recursive: true, force: true });
-      }
-      fs.mkdirSync(path.dirname(skillDest), { recursive: true });
-      fs.cpSync(skillSrc, skillDest, { recursive: true, force: true, filter: copyFilter });
-      process.stdout.write((skillExisted ? '[=] ' : '[+] ') + (skillExisted ? 'skill 已更新：' : 'skill 已安装：') + skillDest + '\n');
-    } catch (err) {
-      fail('复制 skill 失败：' + err.message + '\n    源：' + skillSrc + '\n    目标：' + skillDest);
+  if (fs.existsSync(path.join(PKG_ROOT, TOOLS_REL))) {
+    rejectOverlap(path.join(PKG_ROOT, TOOLS_REL), checkedDestination(target, TOOLS_REL));
+  }
+  for (const harness of harnesses) {
+    const skillDest = checkedDestination(target, HARNESS_DIRS[harness]);
+    if (sameDirectory(skillSrc, skillDest)) {
+      process.stdout.write('[i] dsh 目标就是源码目录，保留源码（--force 也不删除）\n');
+      continue;
     }
-  } else {
-    process.stdout.write(tag('    → ' + skillDest + '（含 ' + skillFiles.length + ' 个文件）\n'));
+    // 直接使用源码仓库时只维护一个正文；发布安装则复制完整、自足的 skill。
+    const repoEntry = harness === 'codex' && sameDirectory(target, PKG_ROOT);
+    const copySrc = repoEntry ? path.join(PKG_ROOT, 'templates', 'codex') : skillSrc;
+    const skillExisted = fs.existsSync(skillDest);
+    process.stdout.write(
+      (skillExisted ? '[!] ' : '[+] ') +
+        (skillExisted ? '检测到该工作区已装过本 skill，本次为更新安装：旧版本文件会被覆盖' +
+          (opts.force ? '（--force：先清空旧目录再重建）' : '（如需清掉旧版本残留文件，请加 --force）') + '\n'
+          : '将安装 skill 到 ' + skillDest + '\n')
+    );
+    if (skillExisted) {
+      process.stdout.write('    目标：' + skillDest + '\n');
+    }
+    process.stdout.write('    ' + tag(harness + '：' + (repoEntry ? '写入源码转发入口' : '复制 ' + skillFiles.length + ' 个 skill 文件') + '\n'));
+
+    if (!dryRun) {
+      try {
+        if (skillExisted && opts.force) {
+          fs.rmSync(skillDest, { recursive: true, force: true });
+        }
+        fs.mkdirSync(path.dirname(skillDest), { recursive: true });
+        fs.cpSync(copySrc, skillDest, { recursive: true, force: true, filter: copyFilter });
+        if (repoEntry) {
+          fs.cpSync(path.join(skillSrc, 'agents'), path.join(skillDest, 'agents'),
+            { recursive: true, force: true, filter: copyFilter });
+        }
+        process.stdout.write((skillExisted ? '[=] ' : '[+] ') + (skillExisted ? 'skill 已更新：' : 'skill 已安装：') + skillDest + '\n');
+      } catch (err) {
+        fail('复制 skill 失败：' + err.message + '\n    源：' + skillSrc + '\n    目标：' + skillDest);
+      }
+    } else {
+      process.stdout.write(tag('    → ' + skillDest + '（含 ' + skillFiles.length + ' 个文件）\n'));
+    }
   }
 
   // ---- 2. 配套脚本（工具/）----
@@ -211,7 +280,9 @@ function main() {
       tag('    ' + TOOLS_REL + '/  ' + (toolsExisted ? '目录已存在（保留其他文件）' : '将创建') +
         '，写入 ' + toolFiles.length + ' 个文件：' + toolFiles.join('、') + '\n')
     );
-    if (!dryRun) {
+    if (sameDirectory(toolsSrc, toolsDest)) {
+      process.stdout.write('    工具目标就是源码目录，保留原文件\n');
+    } else if (!dryRun) {
       try {
         fs.mkdirSync(toolsDest, { recursive: true });
         fs.cpSync(toolsSrc, toolsDest, { recursive: true, force: true, filter: copyFilter });
@@ -277,12 +348,12 @@ function main() {
   process.stdout.write('\n' + (dryRun ? '以上为演练结果，未写入任何文件。去掉 --dry-run 即真正安装。\n' : '装好了。\n'));
   process.stdout.write(
     '下一步：\n' +
-      '  1. 在 DeepSeek Harness 里打开工作区：' + target + '\n' +
+      '  1. 在 ' + harnesses.join(' / ') + ' 里打开工作区：' + target + '\n' +
       '  2. 直接说：批改 2022河南乡镇   （或：批改 .\\作答记录\\河南\\2022河南乡镇.txt）\n' +
       '  3. 真题卷、参考答案、你的作答丢到工作区根目录或对应目录即可，助手会按规范自动归位\n' +
-      '  4. skill 说明：' + path.join(skillDest, 'README.md') + '\n' +
+      '  4. skill 入口：' + harnesses.map(h => path.join(target, HARNESS_DIRS[h], 'SKILL.md')).join('、') + '\n' +
       '  5. 配套脚本：' + toolsDest + '（' + TOOLS_REL + '/count_chars.py 字数核验、' + TOOLS_REL + '/ref_independence.py 参考答案同源检测）\n' +
-      '  6. 更新或重装：npx shenlun-skill --force\n'
+      '  6. 更新或重装：npx shenlun-skill --harness ' + opts.harness + ' --force\n'
   );
   return 0;
 }

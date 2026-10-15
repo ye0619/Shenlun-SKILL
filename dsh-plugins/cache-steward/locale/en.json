@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Cache Steward",
+    "description": "Raises API prompt-cache hit rate: detects cache seams and trims oversized tool results before they enter the session log"
+  }
+}

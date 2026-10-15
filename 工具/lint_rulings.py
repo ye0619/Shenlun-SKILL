@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 已废止口径残留检查器（shenlun-judge 维护工具）
@@ -24,7 +24,7 @@
   L03  60–70               旧公文三池比例（现为 内容 80%／格式 10%／语言 10%）
   L04  分三层              旧"0 家点三层口径"（现为"先判重要性"）
   L05  0 家一律            旧"0 家一律不计分／一律进提醒区"
-  L06  两个配套脚本 / 配套脚本只有 / 只有 `count_chars` 与   旧脚本数（实为 4 个）
+  L06  两个配套脚本 / 配套脚本只有 / 只有 `count_chars` 与   旧脚本数（实为 5 个）
   L07  3＋3＋4              旧分值池取值（10 分/3 点＝40%，已废）
   L08  每点 ≥3 点           误述（实文为"每题至少 3 个点"）
   L09  119 KB / 61 KB      过期体积标注（现为 140 KB / 70 KB）
@@ -66,7 +66,7 @@ RULES = [
     ('L04', r'分三层', '旧"0 家点三层口径"（现为"先判重要性：重要→弱共识计分"）'),
     ('L05', r'0\s*家一律', '旧"0 家一律不计分／一律进提醒区"（现为先判重要性）'),
     ('L06', r'两个配套脚本|配套脚本只有|只有\s*`count_chars`\s*与',
-     '旧脚本数（实为 4 个：count_chars / 卷面核验 / split_reference / ref_independence）'),
+     '旧脚本数（实为 5 个：count_chars / 卷面核验 / split_reference / ref_independence / 卷级一致性检查）'),
     ('L07', r'3＋3＋4', '旧分值池取值（10 分/3 点＝40%，破 35% 与题型 30% 上限，已废）'),
     ('L08', r'每点\s*≥\s*3\s*点', '误述（实文为"每题至少 3 个点"，见 small-questions.md §4）'),
     ('L09', r'119 KB|61 KB', '过期体积标注（现为 scoring-standards 140 KB／essay-judging 70 KB）'),
@@ -131,7 +131,11 @@ def collect_md(root):
 
 
 def default_roots(cwd):
-    return [os.path.normpath(os.path.join(cwd, r)) for r in DEFAULT_ROOTS]
+    roots = list(DEFAULT_ROOTS)
+    # Codex-only 安装没有 .dsh；双入口工作区仍只扫共用源码一次。
+    if not os.path.isdir(os.path.join(cwd, roots[0])):
+        roots[0] = os.path.join('.agents', 'skills', 'shenlun-judge')
+    return [os.path.normpath(os.path.join(cwd, r)) for r in roots]
 
 
 def pick_base(roots, cwd):

@@ -11,6 +11,7 @@
     "阅卷",
     "申论批改",
     "skill",
+    "codex",
     "dsh",
     "deepseek-harness",
     "shenlun",
@@ -26,7 +27,8 @@
     ".dsh/skills/shenlun-judge",
     "bin",
     "templates",
-    "工具"
+    "工具/*.py",
+    "工具/README.md"
   ],
   "engines": {
     "node": ">=18"
@@ -40,6 +42,7 @@
   },
   "homepage": "https://github.com/ye0619/Shenlun-SKILL#readme",
   "scripts": {
+    "test": "node --test tests/install.test.js",
     "selftest": "node bin/install.js --dry-run --dir .",
     "pack:check": "npm pack --dry-run",
     "check:syntax": "node --check bin/install.js"

@@ -1,0 +1,25 @@
+{
+  "name": "@local/dsh-cache-steward",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Harness-side prompt-cache steward: reports cache-seam causes and trims oversized tool results before they enter the session log.",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md"
+  ]
+}

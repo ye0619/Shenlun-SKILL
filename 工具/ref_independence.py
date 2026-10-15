@@ -143,6 +143,13 @@ WHITELIST = {
     "高分网友回忆版": "高分网友回忆版", "刘司柠": "刘司柠", "王鹍": "王鹍",
     "千寻": "千寻", "独立申论": "独立申论", "OK 公考": "OK 公考", "OK公考": "OK 公考",
     "申论大湿": "申论大湿", "半月谈 —— 老师": "半月谈",
+    # 2026-10-04 浙江汇编入库新增（网友采集/AI精修 为多卷在用标签）
+    "网友采集①": "网友采集①", "网友采集②": "网友采集②", "网友采集③": "网友采集③",
+    "AI精修": "AI精修",
+    # 2026-10-11 事故补录（缺白名单 → 脚本静默少算家数；均已在报告/README 留痕）
+    "lulu 一定要上岸": "lulu 一定要上岸",      # 2019 国考地市级第 1 题（脚本曾报 3 家 vs 人工 17 家）
+    "永岸公考": "永岸公考",                    # 2024 浙江 A：首轮三题各少算 1 家
+    "粤政喵": "粤政喵",                        # 2024 浙江 C v1：被并入"相丽君"
 }
 # 按长度倒序，保证"半月谈白鹭"先于"半月谈"命中
 _WL_KEYS = sorted((k for k, v in WHITELIST.items() if v), key=len, reverse=True)
@@ -228,6 +235,35 @@ _BRACKET_AUX_RE = re.compile(
 # 整体包裹的装饰括号（`【粉笔】`／`（华图）`／`「站长」`）——只在两端成对时剥掉
 _WRAPPED_RE = re.compile(r"^[【\[〔（(《<「『]\s*(.+?)\s*[】\]〕）)》>」』]$")
 
+# 行首的包裹式标签（`【粉笔】一、生产方式变化。…`）——标签与正文**同行**。
+# 2026-10-11 事故（2019国考地市级）：参考答案常写成"第1行题干，其后每行一家，
+# 形如 `【标签】答案全文`"。旧逻辑只在 markdown 标题分支里剥 `【】`（`_WRAPPED_RE`
+# 要求括号包住**整行**），纯文本行落到白名单兜底扫描，而该兜底**跳过名字 <3 字**
+# （防误报），于是 `【粉笔】`／`【华图】`／`【中公】`／`【站长】` 全丢——
+# 脚本报 3／3／1／2／8 家，人工清点为 17／9／9／8／8 家。
+_WRAPPED_LEAD_RE = re.compile(
+    r"^[【\[〔（(《<「『]\s*([^】\]〕）)》>」』]{1,24}?)\s*[】\]〕）)》>」』]\s*")
+
+# 尾部括号昵称（`胡荣展（公考大师兄）`／`某机构（网友回忆版）`）——原型是前面的短名。
+# 2026-10-11 复现：2026 浙江 B 首轮写成 `## 胡荣展（公考大师兄）`（含括号、10 字 >
+# `_unknown_name_ok` 的 8 字上限）→ 整份文件被当成 1 个条目；当时靠人工改名绕过。
+_PAREN_TAIL_RE = re.compile(r"^(.{2,10}?)\s*[（(][^（()）]{1,16}[)）]\s*$")
+
+
+def _name_variants(name):
+    """名字候选（按优先级）：原样 → 去掉尾部括号昵称后的短名。
+
+    只用于 header_candidate 内部的标签判定；两个候选都要各自过
+    `canon_label`／`_unknown_name_ok` 的原有防线，故不会放宽"范文标题被误认"的边界。
+    """
+    out = [name]
+    m = _PAREN_TAIL_RE.match(name)
+    if m:
+        shorter = m.group(1).strip()
+        if shorter and shorter != name:
+            out.append(shorter)
+    return out
+
 
 def canon_label(raw):
     """把候选标签规范化成机构/名师名；命中白名单才返回非 None。"""
@@ -303,6 +339,26 @@ def header_candidate(line):
     raw = line.strip()
     if not raw:
         return None
+    # 0) 行首包裹式标签（`【粉笔】正文…`）——必须放在"名称：正文"分支之前：
+    #    答案正文里常带冒号（`【粉笔】出现了五方面新变化：一是…`），
+    #    否则会被 COLON_NAME_RE 当成"名字"整行吞掉而判为非标签。
+    lead = _WRAPPED_LEAD_RE.match(raw)
+    if lead:
+        name = lead.group(1).strip()
+        rest = raw[lead.end():].strip()
+        for cand in _name_variants(name):
+            known = canon_label(cand)
+            if known:
+                return (known, rest, True)
+            if _unknown_name_ok(cand, 1, True):
+                return (cand, rest, False)
+        # 括号内不是白名单名，但**含有**白名单名（`【B 站小马哥】` 含 `小马哥`）。
+        # 2026-10-11 事故：该行正文自带冒号（`…四个方面的变化：一、…`），若在这里放行
+        # 失败就会继续掉进 COLON_NAME_RE 分支而整行被吞——本卷第 3 题因此少算 1 家。
+        # `_WL_KEYS` 已按长度倒序，故取最长命中。
+        for k in _WL_KEYS:
+            if len(k) >= 3 and k in name:
+                return (WHITELIST[k], rest, True)
     heading = HEADING_RE.match(raw)
     if heading:
         body = heading.group(2).strip()
@@ -320,16 +376,23 @@ def header_candidate(line):
             return (known, rest, True)
         if _unknown_name_ok(name, len(heading.group(1)), wrapped):
             return (name, rest, False)
+        for cand in _name_variants(name)[1:]:
+            known_c = canon_label(cand)
+            if known_c:
+                return (known_c, rest, True)
+            if _unknown_name_ok(cand, len(heading.group(1)), wrapped):
+                return (cand, rest, False)
         return None
     bold = BOLD_RE.match(raw)
     if bold:
         name = bold.group(1).strip().strip("：: 　").strip()
         rest = bold.group(2).strip()
-        known = canon_label(name)
-        if known:
-            return (known, rest, True)
-        if _unknown_name_ok(name):
-            return (name, rest, False)
+        for cand in _name_variants(name):
+            known = canon_label(cand)
+            if known:
+                return (known, rest, True)
+            if _unknown_name_ok(cand):
+                return (cand, rest, False)
         return None
     m = COLON_NAME_RE.match(raw)
     if m:
@@ -337,7 +400,8 @@ def header_candidate(line):
         known = canon_label(name)
         if known:
             return (known, rest, True)
-        return None
+        # 不再 `return None`：正文自带冒号的标签行（`【B 站小马哥】…四个方面的变化：一、…`）
+        # 会在这里被整行吞掉，必须继续落到下面的白名单扫描（2026-10-11 事故修复）。
     if PLAIN_NUM_RE.match(raw):
         return None
     # 无 # / ** / 冒号：仅白名单精确命中才认（如单独一行 `站长`）
@@ -521,12 +585,15 @@ def build_units(path, rel, text, opts, warnings):
 
 SUSPECT_LABEL_RE = re.compile(
     r"^([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z ·\-—_]{1,11})[：:]\s*\S")
+# 行首包裹式标签（`【粉笔】正文…`）——同样属于"疑似漏识别"
+SUSPECT_WRAPPED_RE = re.compile(r"^[【\[]\s*([^】\]]{1,20}?)\s*[】\]]")
 
 
 def _warn_possible_missed_labels(units, warnings):
-    """条目内部若出现"机构名＋冒号＋内容"的行，提示可能漏识别标签（会低估来源数）。
+    """条目内部若出现"机构名＋冒号＋内容"或行首 `【机构名】` 的行，提示可能漏识别标签。
 
-    典型：`袁东老师：这句话指…` 因为旧白名单里没有"袁东老师"而被并入上一条。
+    典型一：`袁东老师：这句话指…` 因为旧白名单里没有"袁东老师"而被并入上一条。
+    典型二：`【粉笔】一、生产方式变化。…` 这类"标签与正文同行"的写法（2026-10-11 事故）。
     """
     for u in units:
         if not u.section_no:
@@ -534,20 +601,26 @@ def _warn_possible_missed_labels(units, warnings):
         for ln in u.text.split("\n"):
             s = ln.strip().lstrip("#").strip()
             m = SUSPECT_LABEL_RE.match(s)
-            if not m:
-                continue
-            cand = m.group(1).strip()
-            if any(ch.isdigit() for ch in cand) or len(cand) < 2:
-                continue
-            if cand == u.label.split("·")[-1].split("#")[0]:
-                continue
-            looks_like = (canon_label(cand) is not None
-                          or cand.endswith(("老师", "教育", "公考", "申论")))
-            if looks_like:
-                warnings.append(
-                    "⚠ 疑似漏识别来源标签：%s 内含“%s：”（可能把另一家口径并入了本条，"
-                    "请核对白名单或改用 --no-split）" % (u.label, cand))
-                break
+            if m:
+                cand = m.group(1).strip()
+                if not (any(ch.isdigit() for ch in cand) or len(cand) < 2):
+                    if cand != u.label.split("·")[-1].split("#")[0]:
+                        looks_like = (canon_label(cand) is not None
+                                      or cand.endswith(("老师", "教育", "公考", "申论")))
+                        if looks_like:
+                            warnings.append(
+                                "⚠ 疑似漏识别来源标签：%s 内含“%s：”（可能把另一家口径并入了本条，"
+                                "请核对白名单或改用 --no-split）" % (u.label, cand))
+                            break
+            wm = SUSPECT_WRAPPED_RE.match(s)
+            if wm:
+                cand = wm.group(1).strip()
+                if cand and canon_label(cand) is not None \
+                        and cand != u.label.split("·")[-1].split("#")[0]:
+                    warnings.append(
+                        "⚠ 疑似漏识别来源标签：%s 内含行首“【%s】”（标签与正文同行，"
+                        "可能把另一家口径并入了本条，请核对）" % (u.label, cand))
+                    break
 
 
 def _warn_empty(units, warnings):
@@ -1139,6 +1212,27 @@ def run_selftest():
                 and not any("做" in str(l) or "走向领军" in str(l) for l in labels11))
         check("自检10 H1 范文标题不得当成来源标签；“（参考答案 N）”尾部限定要剥掉",
               ok11, "条目=%s 空=%d" % (labels11, len(empt11)))
+
+        # 11) 【2026-10-11 修复】"标签与正文同行"（`【粉笔】一、…：…`）必须逐家识别。
+        #     复现 2019 国考地市级第 1 题的参考答案格式：第 1 行是题干，其后每行一家，
+        #     形如 `【标签】答案全文`。旧逻辑只认标题式标签 + ≥3 字的白名单兜底扫描，
+        #     故 粉笔／华图／中公／站长 全丢（脚本报 3 家 vs 人工 17 家）。
+        d12 = os.path.join(td, "t12")
+        os.makedirs(d12)
+        open(os.path.join(d12, "第1题.txt"), "w", encoding="utf-8").write(
+            "【1】根据“给定资料1”，请概括小张家乡出现的新变化。（15 分）要求：准确\n\n"
+            "【粉笔】一、生产方式变化。利用技术提升产品附加值；从个体变为园区化。\n"
+            "【华图】1. 电商平台的出现和普及，改变了农产品销售方式，拓宽了销售渠道。\n"
+            "【站长】1、农产品销售从线下变为线上，培训快递包装技术。\n"
+            "【中公】出现了五方面新变化：一是农产品电子商务产业化。\n"
+            "【半月谈白鹭】1，电商快速发展。网购的人增多。\n")
+        b12, s12, _w12 = analyze([d12], opts)
+        labels12 = [str(u.label).split("·")[-1] for u in b12[0]["units"]] if b12 else []
+        want12 = {"粉笔", "华图", "站长", "中公", "半月谈白鹭"}
+        ok12 = (len(b12) == 1 and s12["table"][0]["units"] == 5
+                and set(labels12) == want12)
+        check("自检11 行首“【标签】正文”逐家识别（标签与正文同行）", ok12,
+              "条目=%s" % labels12)
 
     failed = [r for r in results if not r[1]]
     print("-" * 60)
