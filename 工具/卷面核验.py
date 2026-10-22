@@ -24,7 +24,14 @@
   5:-              该题无字数要求（只统计）
 
 退出码：0 = 统计完成（结论可能是 OVER/SHORT，看结论列，**不是报错**）；
-        2 = 参数错误；3 = 文件不存在。
+        2 = 参数错误；3 = 文件不存在；
+        4 = **分题标号未识别**（文件用"一、标题"式写法，无从按题切块）——
+            此时不套用第 1 题上限做整篇判定（旧版会误报"Q1 超额上千字"），
+            只统计整篇字数并在 md 块顶写明原因。
+
+⚠ 分题标号写法：只有"第X题/第X大题"（含 `## 第一题`、`**第二题**`、`答题纸 第一大题`）能被识别。
+   作答文件若用"一、城市照明整治对策"这类标题，请先把分题标题写成"第一题"（副本即可，正文不动），
+   或直接把题号标签加在该行——**不要**让脚本把整篇当第 1 题。
 """
 
 import argparse
@@ -112,6 +119,16 @@ def judge(total, rule):
     return 'NA', '-', '未知要求'
 
 
+def split_guard(sections, rules):
+    """是否需要拦截"整篇被当成第 1 题"的误判。
+
+    条件：分题标号一个都没识别出来（sections 为空），而 --spec 又给了 ≥2 题的规则。
+    此时若照旧套用第 1 题上限，会把整篇字数判成"Q1 超限上千字"这种伪结论
+    （2026-10-21 实测：`一、城市照明整治对策` 式作答被判 Q1=1398 字/上限 250）。
+    """
+    return (not sections) and len([r for r in rules.values() if r.get('kind') != 'none']) >= 2
+
+
 def ascii_table(rows):
     """rows: [{'q':1,'label':'Q1','chars':354,'band':'<=300','verdict':'OVER','delta':54}]"""
     out = []
@@ -129,12 +146,14 @@ def ascii_table(rows):
     return '\n'.join(out)
 
 
-def md_block(rows, command):
-    lines = ['### 用户作文字数（只核验，**不计入评分**）', '',
-             '| 题 | 字数 | 题干要求 | 达标判定 |', '|---|---|---|---|']
+def md_block(rows, command, warning=None):
+    lines = ['### 用户作文字数（只核验，**不计入评分**）', '']
+    if warning:
+        lines += ['> ⚠ **本次未做分题达标判定**：%s' % warning, '']
+    lines += ['| 题 | 字数 | 题干要求 | 达标判定 |', '|---|---|---|---|']
     for r in rows:
         if r['verdict'] == 'NA':
-            verdict = '题干未给字数要求（仅统计）'
+            verdict = r['detail'] if warning else '题干未给字数要求（仅统计）'
         elif r['verdict'] == 'OK':
             verdict = r['detail']
         else:
@@ -174,6 +193,13 @@ def selftest():
         cases.append(('approx 1051 -> OVER', judge(1051, {'kind': 'approx', 'v': 1000})[0] == 'OVER', ''))
         cases.append(('approx 949 -> SHORT', judge(949, {'kind': 'approx', 'v': 1000})[0] == 'SHORT', ''))
         cases.append(('--limits shorthand parsed', parse_spec(limits_to_spec([300, 200]))[2] == {'kind': 'cap', 'v': 200}, ''))
+        # "一、标题"式分题标号：识别不到 → 必须拦截，不能把整篇当第 1 题判超限
+        cases.append(("'一、'式标号不被识别", cc.split_sections('一、甲\n二、乙\n三、丙\n') == [], ''))
+        cases.append(('split_guard 拦截整篇误判',
+                      split_guard([], parse_spec('1:250,2:350,3:450,4:400')) is True, ''))
+        cases.append(('单题文件不拦截', split_guard([], parse_spec('1:300')) is False, ''))
+        cases.append(('已切块文件不拦截',
+                      split_guard(cc.split_sections('第1题\n甲\n第2题\n乙\n'), parse_spec('1:10,2:10')) is False, ''))
     finally:
         os.unlink(tmp.name)
     failed = 0
@@ -224,6 +250,15 @@ def main():
         raw = fh.read()
 
     sections = cc.split_sections(raw)
+    guard = split_guard(sections, rules)
+    guard_note = None
+    if guard:
+        guard_note = ('文件里的分题标号（"第X题/第X大题"）一个都没识别到，'
+                      '无法按题切块——本文件疑似用"一、标题"式写法。'
+                      '整篇 %d 字只作参照，**不套用第 1 题上限做判定**；'
+                      '请把分题标题改成"第一题"式（副本即可，正文不用改）后重跑。'
+                      % cc.analyse_text(raw, args.file)['total'])
+        print('WARNING: %s' % guard_note, file=sys.stderr)
     if not sections:
         sections = [{'name': labels[0] if labels else os.path.basename(args.file),
                      'text': raw, 'matched': True}]
@@ -231,12 +266,14 @@ def main():
     rows, qi = [], 0
     for sec in sections:
         stat = cc.analyse_text(sec['text'], args.file)
-        if sec['matched']:
+        if sec['matched'] and not guard:
             qi += 1
             rule = rules.get(qi, {'kind': 'none'})
         else:
             rule = {'kind': 'none'}
         verdict, band, detail = judge(stat['total'], rule)
+        if guard:
+            verdict, band, detail = 'NA', '-', '分题标号未识别，未作达标判定（整篇仅统计）'
         k = rule.get('kind')
         if k == 'cap':
             req = '<=%d' % rule['v']
@@ -254,25 +291,32 @@ def main():
             delta = rule['v'] - stat['total'] if stat['total'] < rule['v'] else 0
         else:
             req, delta = '-', 0
-        label = labels[qi - 1] if (sec['matched'] and qi - 1 < len(labels)) else sec['name']
-        if sec['matched'] and qi - 1 >= len(labels):
+        if guard:
+            label = 'WHOLE'
+        elif sec['matched'] and qi - 1 < len(labels):
+            label = labels[qi - 1]
+        elif sec['matched']:
             label = 'Q%d' % qi   # 默认题号用 ASCII，避免控制台中文乱码
-        rows.append({'q': qi if sec['matched'] else 0, 'label': label, 'chars': stat['total'],
+        else:
+            label = sec['name']
+        rows.append({'q': (1 if guard else (qi if sec['matched'] else 0)), 'label': label,
+                     'chars': stat['total'],
                      'req': req, 'band': band, 'verdict': verdict, 'delta': delta, 'detail': detail})
 
     command = 'python 工具/卷面核验.py %s --spec "%s"' % (
         args.file, args.spec or limits_to_spec([rules[i]['v'] for i in sorted(rules) if rules[i].get('v')]))
 
     if args.json:
-        print(json.dumps({'file': args.file, 'note': NOTE, 'rows': rows}, ensure_ascii=True, indent=2))
+        print(json.dumps({'file': args.file, 'note': NOTE, 'split_failed': bool(guard),
+                          'warning': guard_note, 'rows': rows}, ensure_ascii=True, indent=2))
     else:
         print(ascii_table(rows))
         if args.md:
             os.makedirs(os.path.dirname(os.path.abspath(args.md)), exist_ok=True)
             with open(args.md, 'w', encoding='utf-8', newline='\n') as fh:
-                fh.write(md_block(rows, command))
+                fh.write(md_block(rows, command, warning=guard_note))
             print('MD_WRITTEN: %s' % args.md)
-    return 0
+    return 4 if guard else 0
 
 
 if __name__ == '__main__':
