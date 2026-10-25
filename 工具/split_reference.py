@@ -181,7 +181,7 @@ def main():
     items = plan(raw)
     if len(items) < 2:
         print('ERROR: 只识别到 %d 个题块，未达 2 个 —— 该汇总件格式与脚本预期不同，'
-              '请按 SKILL.md 第三节第 1 步人工切分（不要盲信脚本输出）。' % len(items))
+              '请按 工具/README.md 的参考答案拆题说明人工核对（不要盲信脚本输出）。' % len(items))
         return 4
 
     print('SOURCE: %s (%d chars)' % (args.source, len(raw)))

@@ -50,7 +50,7 @@
 ## 非 md 材料（2026-09-22 新增）
 
 检测到 **pdf／docx／图片**形式的真题时，助手会先问你**是否启用 MinerU** 转成 md
-（同意才安装、只转当前这套卷；见 skill 的 `SKILL.md` 第三节第 0 步第 6 条）。
+（按授权范围安装、只转当前这套卷；见 skill 的 `references/workspace-layout.md` 第 6 节）。
 `.txt` 不会触发提醒。
 
 ## 提醒

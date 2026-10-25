@@ -1,4 +1,4 @@
 interface:
   display_name: "申论批改"
   short_description: "依据题面与多源参考答案批改申论小题、公文和大作文，附证据、分数区间与改进建议"
-  default_prompt: "请使用 $shenlun-judge 批改我指定的申论作答，并保存带评分依据、建议区间与置信度的报告。"
+  default_prompt: "请使用 $shenlun-judge 批改我指定的申论作答，并保存带评分依据、建议区间和具体不确定性的报告。"
