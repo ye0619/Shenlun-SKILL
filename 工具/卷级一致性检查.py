@@ -13,7 +13,7 @@
 用法
 ----
     python 工具/卷级一致性检查.py --paper 2019国考地市级 --questions 1,2 --essay 0 --reference-questions 1,2
-    python 工具/卷级一致性检查.py --paper 2023浙江C --province 浙江 --questions 1,2,3 --essay 3 --reference-questions 1,2 --exemplars available
+    python 工具/卷级一致性检查.py --paper 2023浙江C --province 浙江 --questions 1,2,3 --essay 3 --reference-questions 1,2 --exemplars available --sample-essay available
     python 工具/卷级一致性检查.py --paper 2019国考地市级 --json
     python 工具/卷级一致性检查.py --selftest
 
@@ -29,7 +29,7 @@
 
 按 rulings.md §1.3 条件建档：1—2 题免建过程文件；3 题及以上检查本次规范，
 有参考答案的小题／公文检查共识表；本次含大作文且有可用范文才检查刻度。
-题型、参考答案与范文可用性由调用方实际核实后显式传入，不猜最后一题为大作文。
+题型、参考答案、可比范文与可照录的本题完整范文由调用方分别核实后显式传入，不猜最后一题为大作文。
 报告内展示按 §1.3.1 逐题检查，不受1—2题独立建档豁免影响；固定栏目与表头见 report-template.md。
 检查范围为结构及数值完整性，证据真实性、候选完整覆盖和范文全文完整性仍须回源核对。
 退出码：0＝齐备（或仅 ⚠ 提示）；1＝有 ✗ 缺件；2＝条件未核实、参数或环境错误。
@@ -47,7 +47,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.2.1（2026-10-25）"
+VERSION = "1.5.0（2026-10-26）"
 
 OK, WARN, MISS, SKIP, UNKNOWN = "ok", "warn", "miss", "skip", "unknown"
 MARK = {OK: "✓", WARN: "⚠", MISS: "✗", SKIP: "○", UNKNOWN: "?"}
@@ -116,7 +116,27 @@ def _heading_sections(text, pattern):
 
 
 def _cell_value(cell):
-    return cell.strip().strip("`*_ ")
+    """还原行内代码、粗体及强调的文字，保留代码内的字面字符。"""
+    code_spans = []
+
+    def protect_code(hit):
+        value = hit[2]
+        if value.startswith(" ") and value.endswith(" ") and value.strip():
+            value = value[1:-1]
+        code_spans.append(value)
+        return "\x00%d\x00" % (len(code_spans) - 1)
+
+    value = re.sub(r"(?<![\\`])(`+)(?!`)(.+?)(?<!`)\1(?!`)", protect_code, cell.strip())
+    patterns = (r"(?<![\\*])(\*{1,3})(?=\S)(.+?)(?<=\S)\1(?!\*)",
+                r"(?<![\w\\_])(_{1,3})(?=\S)(.+?)(?<=\S)\1(?![\w_])")
+    while True:
+        previous = value
+        for pattern in patterns:
+            value = re.sub(pattern, lambda hit: hit[2], value)
+        if value == previous:
+            break
+    value = re.sub(r"\\([`*_])", lambda hit: hit[1], value)
+    return re.sub(r"\x00(\d+)\x00", lambda hit: code_spans[int(hit[1])], value).strip()
 
 
 def _filled(cell):
@@ -149,6 +169,16 @@ def _table_rows(body, required):
             rows.append(dict(zip(headers, values)))
         return rows
     return []
+
+
+def _argument_rows(body):
+    """论点表列序固定；至少三列分论点，更多时须连续扩列。"""
+    rows = _table_rows(body, ("来源", "题目", "总论点", "分论点1", "分论点2", "分论点3"))
+    if not rows:
+        return []
+    headers = list(rows[0])
+    expected = ["来源", "题目", "总论点"] + ["分论点%d" % n for n in range(1, len(headers) - 2)]
+    return rows if headers == expected else []
 
 
 def _numeric_score(value):
@@ -184,7 +214,7 @@ def _has_prose(body):
     return False
 
 
-def _check_report_content(text, questions, essay, references, exemplars):
+def _check_report_content(text, questions, essay, references, exemplars, sample_essay="unknown"):
     """按题核正文；独立缓存不能代替表格，少量题目同样检查。"""
     results = []
     visible = _visible_markdown(text)
@@ -195,6 +225,8 @@ def _check_report_content(text, questions, essay, references, exemplars):
         results.append((UNKNOWN, "报告参考答案条件", "须核实并传 --reference-questions；无则填 none"))
     if essay in questions and exemplars == "unknown":
         results.append((UNKNOWN, "报告范文条件", "须核实并传 --exemplars available 或 none"))
+    if essay in questions and sample_essay == "unknown":
+        results.append((UNKNOWN, "报告示例全文条件", "须独立核实可照录的本题完整范文并传 --sample-essay available 或 none"))
 
     for q in questions:
         matches = [body for hit, body in sections if int(hit[1]) == q]
@@ -232,31 +264,55 @@ def _check_report_content(text, questions, essay, references, exemplars):
                            "须在共识表栏目登记无可用参考答案、已检查路径和原因")
             continue
 
-        scale, scores, exemplar = (section(t) for t in ("大作文刻度表", "范文逐篇评分", "示例范文"))
+        scale, scores, arguments, exemplar = (section(t) for t in ("大作文刻度表", "范文逐篇评分", "论点表", "示例范文"))
+        scale_ids, score_ids, reference_types = [], [], {}
         if exemplars == "none":
-            for title, content in (("刻度表", scale), ("范文逐篇评分", scores), ("示例范文", exemplar)):
+            for title, content in (("刻度表", scale), ("范文逐篇评分", scores), ("论点表", arguments)):
                 record(title, _absence_record(content, "无可用完整可比范文"),
                        "须保留栏目并登记无可用完整可比范文、已检查路径和原因")
         elif exemplars == "available":
-            scale_rows = _table_rows(scale, ("范文ID", "来源", "题意", "内容与论证", "结构", "语言", "相对位置与局限"))
+            scale_rows = _table_rows(scale, ("范文ID", "来源", "参照类型", "原题依据", "可比与不可比维度",
+                                            "题意", "内容与论证", "结构", "语言", "相对位置与局限"))
             score_rows = _table_rows(scores, ("范文ID", "来源", "模拟得分", "模拟档位", "评分依据（含原文）"))
             scale_ids = [row["范文ID"] for row in scale_rows]
             score_ids = [row["范文ID"] for row in score_rows]
-            record("刻度表", bool(scale_rows) and len(set(scale_ids)) == len(scale_ids),
-                   "缺内嵌刻度表、必需列、实质数据行或范文ID重复")
+            reference_types = {row["范文ID"]: row["参照类型"] for row in scale_rows}
+            record("刻度表", bool(scale_rows) and len(set(scale_ids)) == len(scale_ids)
+                   and all(kind in ("同题", "异题弱参照") for kind in reference_types.values()),
+                   "缺内嵌刻度表、原题依据、可比与不可比维度等必需列或实质数据行，或范文ID重复、参照类型不符")
             numeric = [_numeric_score(row["模拟得分"]) for row in score_rows]
+            same_question_maxima = {score[2] for row, score in zip(score_rows, numeric)
+                                    if score and reference_types.get(row["范文ID"]) == "同题"}
             valid = (bool(score_rows) and all(numeric) and len(set(score_ids)) == len(score_ids)
-                     and len({n[2] for n in numeric if n}) == 1)
+                     and len(same_question_maxima) <= 1)
             record("范文逐篇评分", valid,
-                   "每篇须有唯一ID、来源、数值得分/满分、档位及原文依据；分数须在0至满分内且满分一致")
+                   "每篇须有唯一ID、来源、数值得分/原题满分、档位及原文依据；异题满分可不同，同题满分须一致，各篇数值或区间须在0至自身满分内")
             coverage = (bool(scale_rows) and bool(score_rows) and set(scale_ids) == set(score_ids)
                         and {r["范文ID"]: r["来源"] for r in scale_rows}
                         == {r["范文ID"]: r["来源"] for r in score_rows})
             record("范文评分覆盖", coverage, "刻度表与逐篇评分表的范文ID／来源未一一对应")
-            selected = re.search(r"范文ID\s*[：:]\s*`?([\w.-]+)", exemplar)
+            argument_rows = _argument_rows(arguments)
+            record("论点表", bool(argument_rows),
+                   "缺本题论点表或实质单元格；列序须为来源、题目、总论点、分论点1至3，更多分论点连续扩列")
+            argument_sources = [re.fullmatch(r"([\w.-]+)\s*·\s*(.+)", row["来源"])
+                                for row in argument_rows]
+            argument_pairs = [(hit[1], hit[2].strip()) for hit in argument_sources if hit]
+            argument_coverage = (bool(argument_rows) and bool(scale_rows) and bool(score_rows)
+                                 and len(argument_pairs) == len(argument_rows)
+                                 and len({pair[0] for pair in argument_pairs}) == len(argument_rows)
+                                 and dict(argument_pairs) == {r["范文ID"]: r["来源"] for r in scale_rows}
+                                 == {r["范文ID"]: r["来源"] for r in score_rows})
+            record("论点表覆盖", argument_coverage,
+                   "论点表须逐篇覆盖刻度及评分表，来源写作“范文ID · 来源”，不得漏篇、重复ID或错配来源")
+        if sample_essay == "none":
+            record("示例范文", _absence_record(exemplar, "无可照录的本题完整范文"),
+                   "须保留示例范文栏目，独立登记无可照录的本题完整范文、已检查路径和原因")
+        elif sample_essay == "available":
+            selected = re.search(r"范文ID\s*[：:]\s*([\w.-]+)(?=\s|[（(]|$)", _cell_value(exemplar))
             record("示例范文", bool(selected) and selected[1] in scale_ids
-                   and selected[1] in score_ids and _has_prose(exemplar),
-                   "缺范文全文或入选范文ID未在刻度表和评分表中登记")
+                   and selected[1] in score_ids and reference_types.get(selected[1]) == "同题"
+                   and _has_prose(exemplar),
+                   "缺范文全文或入选范文ID未在刻度表和评分表中登记；示例全文须为同题候选，不能用异题弱参照")
     return results
 
 
@@ -327,7 +383,8 @@ def _script_counts(root: Path, province: str, paper: str):
 
 # ----------------------------------------------------------------- 主检查
 def check_paper(root: Path, province: str, paper: str, essay=None, run_counts=True,
-                questions=None, reference_questions=None, exemplars="unknown", report=None):
+                questions=None, reference_questions=None, exemplars="unknown", report=None,
+                sample_essay="unknown"):
     r = []
     # 1) 报告（允许 v2 变体）
     reports = ([root / report] if report else _report_paths(root, province, paper))
@@ -356,7 +413,10 @@ def check_paper(root: Path, province: str, paper: str, essay=None, run_counts=Tr
     if reference_questions is not None and essay in reference_questions:
         raise ValueError("--reference-questions 只填小题／公文，范文用 --exemplars 声明")
 
-    r.extend(_check_report_content(text, qs, essay, reference_questions, exemplars))
+    if essay in qs and sample_essay == "available" and exemplars == "none":
+        raise ValueError("可照录的本题完整范文须先预评分并纳入可比范文；--sample-essay available 不能与 --exemplars none 同用")
+
+    r.extend(_check_report_content(text, qs, essay, reference_questions, exemplars, sample_essay))
 
     detailed = len(qs) >= 3
     if qs and not detailed:
@@ -488,6 +548,19 @@ def selftest():
         if got != want:
             fails.append("%s: got %r want %r" % (name, got, want))
 
+    for raw, plain in (
+        ("F1 · `参考答案/卷_甲/第4题.txt`", "F1 · 参考答案/卷_甲/第4题.txt"),
+        ("**`F1`** · **来源甲**", "F1 · 来源甲"),
+        ("_F1_ · *来源甲*", "F1 · 来源甲"),
+        ("__F1__ · ***来源甲***", "F1 · 来源甲"),
+        ("`_来源_`", "_来源_"),
+        ("`**来源**`", "**来源**"),
+        ("``源`文``", "源`文"),
+        ("参考答案/卷_甲/范文_乙.txt", "参考答案/卷_甲/范文_乙.txt"),
+        ("`F_1`", "F_1"),
+    ):
+        eq(_cell_value(raw), plain, "行内排版归一化：%s" % raw)
+
     paper = "2099国考地市级"
 
     def write(root, rel, body="已核实的过程记录"):
@@ -515,19 +588,25 @@ def selftest():
                              if q in (refs or ()) else absent("无可用参考答案"))
                 parts.append("#### 参考答案\n##### 参考正文\n推动公共服务下沉，将服务送到村民身边。\n")
             elif exemplars == "none":
-                for title in ("大作文刻度表", "范文逐篇评分", "示例范文"):
+                for title in ("大作文刻度表", "范文逐篇评分", "论点表"):
                     parts.append("#### %s\n%s" % (title, absent("无可用完整可比范文")))
+                parts.append("#### 示例范文\n" + absent("无可照录的本题完整范文"))
             else:
                 parts.append("#### 大作文刻度表\n"
-                             "|范文ID|来源|题意|内容与论证|结构|语言|相对位置与局限|\n"
-                             "|---|---|---|---|---|---|---|\n"
-                             "|F1|机构甲原文|切题|有因果论证|递进完整|流畅|本题上位参照，边界分析不足|\n"
-                             "|F2|机构乙原文|切题|分析充分|并列完整|通顺|本题中位参照，机制分析不足|\n"
+                             "|范文ID|来源|参照类型|原题依据|可比与不可比维度|题意|内容与论证|结构|语言|相对位置与局限|\n"
+                             "|---|---|---|---|---|---|---|---|---|---|\n"
+                             "|F1|机构甲原文|同题|本卷第4题原文及材料，满分40分见题干|可比：本题各维度；不可比：无，同题任务一致|切题|有因果论证|递进完整|流畅|本题上位参照，边界分析不足|\n"
+                             "|F2|机构乙原文|同题|本卷第4题原文及材料，满分40分见题干|可比：本题各维度；不可比：无，同题任务一致|切题|分析充分|并列完整|通顺|本题中位参照，机制分析不足|\n"
                              "#### 范文逐篇评分\n"
                              "|范文ID|来源|模拟得分|模拟档位|评分依据（含原文）|\n"
                              "|---|---|---|---|---|\n"
                              "|F1|机构甲原文|32/40|一类下|原文“服务送到村”切题，因果充分，结构完整，语言流畅|\n"
                              "|F2|机构乙原文|30–31/40|二类上|原文“村民少跑路”有事实，结构完整；机制解释的完整性存在歧义|\n"
+                             "#### 论点表\n"
+                             "|来源|题目|总论点|分论点1|分论点2|分论点3|\n"
+                             "|---|---|---|---|---|---|\n"
+                             "|F1 · 机构甲原文|服务送到村|公共服务要到达群众身边（第1段）|渠道下沉降低办事成本（第2段）|人员下沉提升服务质量（第3段）|资源下沉促进均等化（第4段）|\n"
+                             "|F2 · 机构乙原文|原文无标题|让群众就近享有公共服务（第1段）|增设网点让村民少跑路（第2段）|优化流程缩短办事时间（第3段）|无（本篇仅2个分论点）|\n"
                              "#### 示例范文\n- 范文ID：F1\n- 选取理由：切题且论证充分\n"
                              "> 服务送到村\n> 公共服务需要到达群众身边。通过渠道下沉，减少村民办事的成本。\n")
         return "".join(parts)
@@ -544,7 +623,8 @@ def selftest():
             if qs:
                 write(root, report, fixture(qs, essay, refs, exemplars))
             return check_paper(root, "国考", paper, essay=essay, questions=qs,
-                               reference_questions=refs, exemplars=exemplars, run_counts=False)
+                               reference_questions=refs, exemplars=exemplars, run_counts=False,
+                               sample_essay=exemplars)
 
         res = run([1, 2])
         eq(summarize(res)[0], [], "只改两题免建过程文件，整卷报告含四题不扩大显式范围")
@@ -592,14 +672,81 @@ def selftest():
 
         # 缓存齐全也不能替代正文；逐项验证报告内容缺失会阻止交付。
         full = fixture([1, 4], essay=4, refs=[1])
-        def content(body, qs=(1, 4), essay=4, refs=(1,), exemplars="available"):
-            return _check_report_content(body, qs, essay, refs, exemplars)
+        def content(body, qs=(1, 4), essay=4, refs=(1,), exemplars="available", sample_essay=None):
+            sample = exemplars if sample_essay is None else sample_essay
+            return _check_report_content(body, qs, essay, refs, exemplars, sample)
         eq(summarize(content(full))[0], [], "两题报告完整展示即可通过正文检查")
+        original_reference = ("|F2|机构乙原文|同题|本卷第4题原文及材料，满分40分见题干|"
+                              "可比：本题各维度；不可比：无，同题任务一致|切题|分析充分|并列完整|通顺|本题中位参照，机制分析不足|")
+        weak_reference = ("|F2|机构乙原文|异题弱参照|原卷B第3题题干及材料，满分50分见原题|"
+                          "可比：论证与语言，任务接近且均有因果分析；不可比：题意与内容覆盖，原题要求不同|"
+                          "切合原题|原题分析充分|并列完整|通顺|仅作明确可比维度的弱参照|")
+        mixed = full.replace(original_reference, weak_reference).replace("30–31/40", "37–38/50")
+        eq(summarize(content(mixed))[0], [], "同题40分与异题原题50分的预评可并存")
+        for replacement in ("51/50", "38–37/50", "37/0"):
+            eq("第4题报告·范文逐篇评分" in summarize(content(mixed.replace("37–38/50", replacement)))[0], True,
+               "允许不同满分后仍逐篇拦截越界或无效分数：%s" % replacement)
+        for old, new, name in (
+            ("|原题依据|", "|原文链接|", "原题依据列缺失"),
+            ("|可比与不可比维度|", "|备注|", "可比范围列缺失"),
+            ("|异题弱参照|", "|一般参考|", "参照类型未按同题或异题登记"),
+            ("|原卷B第3题题干及材料，满分50分见原题|", "|…|", "原题依据为占位"),
+        ):
+            eq("第4题报告·刻度表" in summarize(content(mixed.replace(old, new)))[0], True, name + "须报错")
+        eq("第4题报告·示例范文" in summarize(content(mixed.replace("- 范文ID：F1", "- 范文ID：F2")))[0], True,
+           "已评分的异题弱参照不能入选本题示例全文")
+        source = "参考答案/国考/2099_甲/第4题.txt"
+        plain_source = full.replace("机构甲原文", source)
+        for rendered in ("F1 · `" + source + "`", "**F1** · **" + source + "**",
+                         "**`F1`** · `" + source + "`", "_F1_ · *" + source + "*"):
+            formatted = plain_source.replace("F1 · " + source, rendered)
+            eq(summarize(content(formatted))[0], [], "仅论点表使用不同排版仍与纯文本来源对应")
+        formatted = plain_source.replace("|F1|" + source + "|", "|**F1**|**" + source + "**|", 1)
+        formatted = formatted.replace("|F1|" + source + "|", "|`F1`|`" + source + "`|", 1)
+        formatted = formatted.replace("F1 · " + source, "**`F1`** · `" + source + "`")
+        formatted = formatted.replace("- 范文ID：F1", "- 范文ID：**`F1`**")
+        eq(summarize(content(formatted))[0], [], "三表与示例ID各用不同排版仍正确对应")
+        wrong_source = plain_source.replace("F1 · " + source, "**F1** · `" + source.replace("2099_甲", "2099甲") + "`")
+        eq("第4题报告·论点表覆盖" in summarize(content(wrong_source))[0], True,
+           "真实路径中的下划线差异不能当作排版忽略")
+        wrong_id = plain_source.replace("F1 · " + source, "**F_1** · `" + source + "`")
+        eq("第4题报告·论点表覆盖" in summarize(content(wrong_id))[0], True,
+           "实际ID差异不能被排版归一化掩盖")
+        duplicate_id = full.replace("|F2|机构乙原文|", "|**F1**|机构乙原文|")
+        eq("第4题报告·范文逐篇评分" in summarize(content(duplicate_id))[0], True,
+           "排版不同但实际ID重复仍报错")
+        duplicate_argument = full.replace("F2 · 机构乙原文", "**`F1`** · 机构乙原文")
+        eq("第4题报告·论点表覆盖" in summarize(content(duplicate_argument))[0], True,
+           "论点表排版不同但实际ID重复仍报错")
         eq(summarize(content(fixture([1], refs=[]), [1], 0, [], "unknown"))[0], [],
            "无参考答案保留核实说明，仍交付采分点与参考正文")
         eq(summarize(content(fixture([4], 4, [], "none"), [4], 4, [], "none"))[0], [],
-           "无范文三个栏目各有已检查路径及原因即可通过")
-        for title in ("采分点表", "参考答案共识表", "参考答案", "大作文刻度表", "范文逐篇评分", "示例范文"):
+           "无范文四个栏目各有已检查路径及原因即可通过")
+        sample_absent = re.sub(r"^#### 示例范文\n.*?(?=^#{1,4} |\Z)",
+                               "#### 示例范文\n" + absent("无可照录的本题完整范文"),
+                               full, count=1, flags=re.M | re.S)
+        eq(summarize(content(sample_absent, sample_essay="none"))[0], [],
+           "有可比范文而无可照录全文时，三张表加示例缺失说明可通过")
+        eq("第4题报告·示例范文" in summarize(content(sample_absent, sample_essay="available"))[0], True,
+           "已确认有示例候选时，缺失说明不能代替应附全文")
+        eq(any(level == UNKNOWN and title == "报告示例全文条件"
+               for level, title, _ in content(full, sample_essay="unknown")), True,
+           "有可比范文不能代推示例全文已核实")
+        eq(any(level == UNKNOWN and title == "报告示例全文条件"
+               for level, title, _ in content(fixture([4], 4, [], "none"), [4], 4, [], "none", "unknown")), True,
+           "无可比范文也须独立核实示例全文条件")
+        for field in ("已检查", "原因"):
+            incomplete = re.sub(r"^- " + field + r"：.*\n", "", sample_absent, flags=re.M)
+            eq("第4题报告·示例范文" in summarize(content(incomplete, sample_essay="none"))[0], True,
+               "无可照录全文时缺%s须报错" % field)
+        wrong_status = sample_absent.replace("状态：无可照录的本题完整范文", "状态：无可用完整可比范文")
+        eq("第4题报告·示例范文" in summarize(content(wrong_status, sample_essay="none"))[0], True,
+           "示例全文缺失不能借用可比范文的缺失状态")
+        missing_scale = re.sub(r"^#### 大作文刻度表\n.*?(?=^#{1,4} |\Z)", "", sample_absent,
+                               count=1, flags=re.M | re.S)
+        eq("第4题报告·刻度表" in summarize(content(missing_scale, sample_essay="none"))[0], True,
+           "无示例全文不豁免已有可比范文的表格")
+        for title in ("采分点表", "参考答案共识表", "参考答案", "大作文刻度表", "范文逐篇评分", "论点表", "示例范文"):
             changed = re.sub(r"^#### " + title + r"\n.*?(?=^#{1,4} |\Z)", "", full, count=1, flags=re.M | re.S)
             eq(bool(summarize(content(changed))[0]), True, "缺本题%s不能通过" % title)
         for old, new, name in (
@@ -608,7 +755,7 @@ def selftest():
             ("32/40", "32/0", "满分为零"),
             ("32/40", "-1/40", "负分"),
             ("30–31/40", "32–30/40", "反向区间"),
-            ("30–31/40", "30/50", "各范文满分不一致"),
+            ("30–31/40", "30/50", "同题范文满分不一致"),
             ("|F2|机构乙原文|30–31/40|二类上|原文“村民少跑路”有事实，结构完整；机制解释的完整性存在歧义|\n", "", "漏评一篇"),
             ("|F2|机构乙原文|30–31/40", "|F1|机构乙原文|30–31/40", "范文ID重复"),
             ("|F2|机构乙原文|30–31/40", "|F2|其他来源|30–31/40", "范文来源错配"),
@@ -617,6 +764,47 @@ def selftest():
             ("|服务下沉|材料1：服务送到村|机构甲|核心任务|计分|5|", "|…|…|…|…|…|…|", "表格只有占位符"),
         ):
             eq(bool(summarize(content(full.replace(old, new)))[0]), True, name + "不能通过")
+        arguments = full[full.index("#### 论点表\n"):full.index("#### 示例范文\n")]
+        argument_lines = arguments.splitlines()
+        for old, new, name in (
+            (argument_lines[1], "|题目|来源|总论点|分论点1|分论点2|分论点3|", "表头顺序错误"),
+            (argument_lines[1], "|范文ID|题目|总论点|分论点1|分论点2|分论点3|", "来源列缺失"),
+            (argument_lines[4] + "\n", "", "论点表漏一篇"),
+            ("F2 · 机构乙原文", "F1 · 机构乙原文", "论点表ID重复"),
+            ("F2 · 机构乙原文", "F3 · 机构乙原文", "论点表额外范文"),
+            ("F2 · 机构乙原文", "F2 · 其他来源", "论点表来源错配"),
+            ("F2 · 机构乙原文", "机构乙原文", "论点表无对应ID"),
+            ("|原文无标题|", "||", "标题单元格为空"),
+            ("|让群众就近享有公共服务（第1段）|", "|…|", "总论点为占位符"),
+            ("|无（本篇仅2个分论点）|", "||", "较少分论点未如实标明"),
+        ):
+            changed = full.replace(arguments, arguments.replace(old, new))
+            eq("第4题报告·论点表" in summarize(content(changed))[0]
+               or "第4题报告·论点表覆盖" in summarize(content(changed))[0], True, name + "须报缺项")
+        for count in (4, 5):
+            expanded_lines = [argument_lines[0],
+                              argument_lines[1] + "".join("分论点%d|" % n for n in range(4, count + 1)),
+                              argument_lines[2] + "---|" * (count - 3),
+                              argument_lines[3] + "".join("完善监督机制（第%d段）|" % (n + 1) for n in range(4, count + 1)),
+                              argument_lines[4] + "无（本篇仅2个分论点）|" * (count - 3)]
+            expanded = full.replace(arguments, "\n".join(expanded_lines) + "\n")
+            eq(summarize(content(expanded))[0], [], "%d个分论点扩列且较少者标明可通过" % count)
+            eq("第4题报告·论点表" in summarize(content(expanded.replace("分论点4|", "分论点6|")))[0], True,
+               "扩列不连续须报缺项")
+            eq("第4题报告·论点表" in summarize(content(expanded.replace("完善监督机制（第5段）|", "|")))[0], True,
+               "扩展列为空须报缺项")
+        no_arguments = re.sub(r"^#### 论点表\n.*?(?=^#{1,4} |\Z)", "", full, count=1, flags=re.M | re.S)
+        other_question = no_arguments.replace("#### 参考答案\n", arguments + "#### 参考答案\n", 1)
+        eq("第4题报告·论点表" in summarize(content(other_question))[0], True, "其他题的论点表不能替代本题")
+        absent_arguments = fixture([4], 4, [], "none").replace("#### 论点表\n" + absent("无可用完整可比范文"), "")
+        eq("第4题报告·论点表" in summarize(content(absent_arguments, [4], 4, [], "none"))[0], True,
+           "无范文也须保留论点表栏目及核实说明")
+        # 通过实际文件及 check_paper 核验新增栏目，仍适用单题免建过程文件的路径。
+        write(root, report, no_arguments.replace("### 第1题", "### 第2题"))
+        res = check_paper(root, "国考", paper, questions=[4], essay=4,
+                          reference_questions=[], exemplars="available", run_counts=False,
+                          sample_essay="available")
+        eq("第4题报告·论点表" in summarize(res)[0], True, "单题交付检查检出论点表缺失")
         eq(bool(summarize(content("```markdown\n" + full + "\n```"))[0]), True, "代码块模板不能充当正文")
         eq(bool(summarize(content("<!--\n" + full + "\n-->"))[0]), True, "注释不能充当正文")
         eq(bool(summarize(content(full.replace("### 第4题", "### 第5题")))[0]), True,
@@ -694,6 +882,33 @@ def selftest():
         eq(cli(["--questions", "1,2,3", "--essay", "0", "--reference-questions", "none"]), 1,
            "CLI 必建缺件退出一")
         eq(cli(["--questions", "1,2,3"]), 2, "CLI 条件未知退出二，不误报齐备")
+        essay_args = ["--questions", "4", "--essay", "4", "--reference-questions", "none", "--report", report]
+        write(root, report, fixture([4], 4, []))
+        eq(cli(essay_args + ["--exemplars", "available"]), 2, "CLI 示例全文条件未独立核实退出二")
+        eq(cli(essay_args + ["--exemplars", "available", "--sample-essay", "available"]), 0,
+           "CLI 有参照且有示例全文退出零")
+        write(root, report, sample_absent)
+        eq(cli(essay_args + ["--exemplars", "available", "--sample-essay", "none"]), 0,
+           "CLI 有参照而无示例全文的缺失说明通过")
+        eq(cli(essay_args + ["--exemplars", "available", "--sample-essay", "available"]), 1,
+           "CLI 有示例候选却缺全文退出一")
+        write(root, report, fixture([4], 4, [], "none"))
+        eq(cli(essay_args + ["--exemplars", "none", "--sample-essay", "none"]), 0,
+           "CLI 两类范文均缺失且分别有说明退出零")
+        write(root, report, mixed)
+        eq(cli(essay_args + ["--exemplars", "available", "--sample-essay", "available"]), 0,
+           "CLI 原题满分不同且各自有依据的范文报告通过")
+        write(root, report, mixed.replace("37–38/50", "51/50"))
+        eq(cli(essay_args + ["--exemplars", "available", "--sample-essay", "available"]), 1,
+           "CLI 原题满分不同但其中一篇越界仍退出一")
+        try:
+            check_paper(root, "国考", paper, questions=[4], essay=4, reference_questions=[],
+                        exemplars="none", sample_essay="available", run_counts=False, report=report)
+        except ValueError:
+            inconsistent = True
+        else:
+            inconsistent = False
+        eq(inconsistent, True, "已确认本题示例候选却声明无任何可比范文须提示条件冲突")
 
     print("自检 %d 项" % checks)
     if fails:
@@ -719,6 +934,7 @@ def main(argv=None):
     ap.add_argument("--essay", type=int, default=None, help="已核实的大作文题号；无大作文填 0，未提供则未知，不猜最后一题")
     ap.add_argument("--reference-questions", type=_question_list, default=None, help="本次有可用参考答案的小题／公文题号，如 1,2；无则填 none")
     ap.add_argument("--exemplars", choices=("available", "none", "unknown"), default="unknown", help="本次大作文是否有可用完整可比范文，须实际核对")
+    ap.add_argument("--sample-essay", choices=("available", "none", "unknown"), default="unknown", help="本卷参考答案中是否有可照录的同题完整范文，与比较参照分别核实")
     ap.add_argument("--report", help="本次报告路径（相对工作区或绝对路径）；默认按修改时间选择最新报告")
     ap.add_argument("--root", default=None, help="工作区根目录（默认脚本上一级）")
     ap.add_argument("--no-counts", action="store_true", help="跳过家数交叉核对（不跑 ref_independence）")
@@ -741,7 +957,7 @@ def main(argv=None):
     try:
         res = check_paper(root, a.province, a.paper, essay=a.essay, run_counts=not a.no_counts,
                           questions=a.questions, reference_questions=a.reference_questions,
-                          exemplars=a.exemplars, report=a.report)
+                          exemplars=a.exemplars, report=a.report, sample_essay=a.sample_essay)
     except ValueError as exc:
         ap.error(str(exc))
     miss, warn = summarize(res)
